@@ -19,9 +19,9 @@ class NGonCanvas(QWidget):
 
         # Konfigurácia zoomu a mriežky
         self.CONFIG = {
-            "MAX_ZOOM_IN": 20.0,
-            "MAX_ZOOM_OUT": 0.10,
-            "GRID_1_THRESHOLD": 1.0  # Pod túto hodnotu zoomu sa 1x mriežka skryje
+            "MAX_ZOOM_IN": 15.0,
+            "MAX_ZOOM_OUT": 0.30,
+            "GRID_1_THRESHOLD": 2.5  # Pod túto hodnotu zoomu sa 1x mriežka skryje
         }
 
         # Body n-gonu
@@ -50,6 +50,11 @@ class NGonCanvas(QWidget):
         self.last_mouse_pos = QPointF()
         self.is_panning = False
         self.dragging_point_idx = -1
+        
+        self.hovered_segment_idx = -1
+        self.selected_segment_idx = -1
+        self.dragging_segment_idx = -1
+        self.last_world_pos = QPointF()
 
     def get_scale(self):
         """Vypočíta aktuálnu mierku zohľadňujúcu šírku okna a zoom."""
@@ -74,6 +79,13 @@ class NGonCanvas(QWidget):
         y = round(pt.y()) if self.snap_y else pt.y()
         return QPointF(x, y)
 
+    def dist_to_segment(self, p, a, b):
+        """Vráti vzdialenosť bodu P od úsečky AB v pixeloch."""
+        pa = p - a
+        ba = b - a
+        t = max(0, min(1, QPointF.dotProduct(pa, ba) / QPointF.dotProduct(ba, ba)))
+        return (pa - ba * t).manhattanLength()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -90,12 +102,26 @@ class NGonCanvas(QWidget):
         if self.safe_enabled:
             self.draw_safe_region(painter)
 
-        # 4. Vykreslenie N-gonu
         if len(self.points) > 0:
-            painter.setPen(QPen(QColor(0, 150, 255), 2))
             for i in range(len(self.points)):
-                p1 = self.to_screen(self.points[i])
-                p2 = self.to_screen(self.points[(i + 1) % len(self.points)])
+                p1_idx = i
+                p2_idx = (i + 1) % len(self.points)
+                p1 = self.to_screen(self.points[p1_idx])
+                p2 = self.to_screen(self.points[p2_idx])
+                
+                # Základná farba čiary
+                color = QColor(0, 150, 255)
+                width = 2
+                
+                # Zvýraznenie ak je segment vybraný alebo pod myšou
+                if i == self.selected_segment_idx:
+                    color = QColor(255, 100, 0)
+                    width = 4
+                elif i == self.hovered_segment_idx:
+                    color = QColor(0, 255, 255)
+                    width = 3
+                
+                painter.setPen(QPen(color, width))
                 painter.drawLine(p1, p2)
 
             for i, pt in enumerate(self.points):
@@ -156,8 +182,8 @@ class NGonCanvas(QWidget):
         p2 = self.to_screen(QPointF(self.safe_r, self.safe_d))
         rect = QRectF(p1, p2)
         
-        painter.setPen(QPen(QColor(255, 165, 0, 150), 2, Qt.DashLine))
-        painter.setBrush(QBrush(QColor(255, 165, 0, 20)))
+        painter.setPen(QPen(QColor(255, 165, 0, 150), 1, Qt.SolidLine))
+        painter.setBrush(QBrush(QColor(195, 165, 0, 5)))
         painter.drawRect(rect)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -179,6 +205,7 @@ class NGonCanvas(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent):
         world_pos = self.to_world(event.position())
+        self.last_world_pos = world_pos
         
         # Panning (Middle button ALEBO Alt + Left Click)
         if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and event.modifiers() & Qt.AltModifier):
@@ -187,7 +214,7 @@ class NGonCanvas(QWidget):
             self.setCursor(Qt.ClosedHandCursor)
             return
 
-        # Výber existujúceho bodu
+        # 1. Priorita: Výber existujúceho bodu
         hit_index = -1
         for i, pt in enumerate(self.points):
             dist = (self.to_screen(pt) - event.position()).manhattanLength()
@@ -196,41 +223,102 @@ class NGonCanvas(QWidget):
                 break
         
         if hit_index != -1:
-            # Ak sme klikli na bod, označíme ho a pripravíme na ťahanie
             self.selected_index = hit_index
             self.dragging_point_idx = hit_index
+            self.selected_segment_idx = -1 # Zruš výber segmentu
             self.selectionChanged.emit(hit_index)
-        elif event.modifiers() & Qt.ControlModifier:
-            # Nový bod sa vytvorí LEN ak držíme Ctrl
+            self.update()
+            return
+
+        # 2. Priorita: Interakcia so segmentom (čiarou)
+        if self.hovered_segment_idx != -1:
+            if event.modifiers() & Qt.ControlModifier:
+                # Vloženie bodu do segmentu
+                new_pt = self.apply_snap(world_pos)
+                self.points.insert(self.hovered_segment_idx + 1, new_pt)
+                self.selected_index = self.hovered_segment_idx + 1
+                self.selected_segment_idx = -1
+                self.pointsChanged.emit(self.points)
+                self.selectionChanged.emit(self.selected_index)
+            else:
+                # Označenie segmentu pre posun
+                self.selected_segment_idx = self.hovered_segment_idx
+                self.dragging_segment_idx = self.hovered_segment_idx
+                self.selected_index = -1
+                self.selectionChanged.emit(-1)
+            self.update()
+            return
+
+        # 3. Priorita: Nový bod na koniec (len s Ctrl)
+        if event.modifiers() & Qt.ControlModifier:
             new_pt = self.apply_snap(world_pos)
             self.points.append(new_pt)
             self.selected_index = len(self.points) - 1
+            self.selected_segment_idx = -1
             self.pointsChanged.emit(self.points)
             self.selectionChanged.emit(self.selected_index)
         else:
-            # Kliknutie do prázdna bez Ctrl zruší aktuálny výber
             self.selected_index = -1
+            self.selected_segment_idx = -1
             self.selectionChanged.emit(-1)
         
         self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        world_pos = self.to_world(event.position())
+        
         if self.is_panning:
             delta = event.position() - self.last_mouse_pos
             scale = self.get_scale()
             self.pan_offset += QPointF(delta.x() / scale, -delta.y() / scale)
             self.last_mouse_pos = event.position()
             self.update()
+            return
         
-        elif self.dragging_point_idx != -1:
-            world_pos = self.to_world(event.position())
+        if self.dragging_point_idx != -1:
             self.points[self.dragging_point_idx] = self.apply_snap(world_pos)
             self.pointsChanged.emit(self.points)
+            self.update()
+            return
+
+        if self.dragging_segment_idx != -1:
+            delta = world_pos - self.last_world_pos
+            idx1 = self.dragging_segment_idx
+            idx2 = (idx1 + 1) % len(self.points)
+            
+            # Posunieme oba body segmentu
+            self.points[idx1] += delta
+            self.points[idx2] += delta
+            
+            # Ak je snap zapnutý, aplikujeme ho po posune
+            self.points[idx1] = self.apply_snap(self.points[idx1])
+            self.points[idx2] = self.apply_snap(self.points[idx2])
+            
+            self.last_world_pos = world_pos
+            self.pointsChanged.emit(self.points)
+            self.update()
+            return
+
+        # Detekcia hoveru nad segmentom (keď sa nič neťahá)
+        old_hover = self.hovered_segment_idx
+        self.hovered_segment_idx = -1
+        
+        if len(self.points) >= 2:
+            mouse_px = event.position()
+            for i in range(len(self.points)):
+                p1 = self.to_screen(self.points[i])
+                p2 = self.to_screen(self.points[(i + 1) % len(self.points)])
+                if self.dist_to_segment(mouse_px, p1, p2) < 8:
+                    self.hovered_segment_idx = i
+                    break
+        
+        if old_hover != self.hovered_segment_idx:
             self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         self.is_panning = False
         self.dragging_point_idx = -1
+        self.dragging_segment_idx = -1
         self.setCursor(Qt.ArrowCursor)
 
     def keyPressEvent(self, event: QKeyEvent):
