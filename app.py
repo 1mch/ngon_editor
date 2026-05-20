@@ -21,7 +21,8 @@ class NGonCanvas(QWidget):
         self.CONFIG = {
             "MAX_ZOOM_IN": 15.0,
             "MAX_ZOOM_OUT": 0.30,
-            "GRID_1_THRESHOLD": 2.5  # Pod túto hodnotu zoomu sa 1x mriežka skryje
+            "GRID_1_THRESHOLD": 2.5,  # Pod túto hodnotu zoomu sa 1x mriežka skryje
+            "GRID_5_THRESHOLD": 1   # Pod túto hodnotu zoomu sa 5x mriežka skryje
         }
 
         # Body n-gonu
@@ -149,15 +150,16 @@ class NGonCanvas(QWidget):
         start_y = int(bottom_right.y()) - 1
         end_y = int(top_left.y()) + 1
 
-        # Určenie, či je zoom dostatočný na zobrazenie 1x mriežky
+        # Určenie, či je zoom dostatočný na zobrazenie mriežok
         can_show_grid_1 = self.show_grid_1 and (self.zoom_level > self.CONFIG["GRID_1_THRESHOLD"])
+        can_show_grid_5 = self.show_grid_5 and (self.zoom_level > self.CONFIG["GRID_5_THRESHOLD"])
 
         for x in range(start_x, end_x):
-            self.draw_grid_line(painter, x, True, can_show_grid_1)
+            self.draw_grid_line(painter, x, True, can_show_grid_1, can_show_grid_5)
         for y in range(start_y, end_y):
-            self.draw_grid_line(painter, y, False, can_show_grid_1)
+            self.draw_grid_line(painter, y, False, can_show_grid_1, can_show_grid_5)
 
-    def draw_grid_line(self, painter, val, is_vertical, can_show_grid_1):
+    def draw_grid_line(self, painter, val, is_vertical, can_show_grid_1, can_show_grid_5):
         # Logika viditeľnosti mriežky
         is_10 = (val % 10 == 0)
         is_5 = (val % 5 == 0)
@@ -166,7 +168,7 @@ class NGonCanvas(QWidget):
             if not self.show_grid_10: return
             painter.setPen(QPen(QColor(80, 80, 80), 1))
         elif is_5:
-            if not self.show_grid_5: return
+            if not can_show_grid_5: return
             painter.setPen(QPen(QColor(55, 55, 55), 1))
         else:
             if not can_show_grid_1: return
