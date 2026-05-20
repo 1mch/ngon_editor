@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QDoubleSpinBox, QGridLayout
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QKeyEvent, QMouseEvent, QWheelEvent
+from PySide6.QtGui import QLinearGradient, QPainter, QColor, QPen, QBrush, QKeyEvent, QMouseEvent, QWheelEvent
 
 class NGonCanvas(QWidget):
     pointsChanged = Signal(list)
@@ -109,19 +109,28 @@ class NGonCanvas(QWidget):
                 p1 = self.to_screen(self.points[p1_idx])
                 p2 = self.to_screen(self.points[p2_idx])
                 
-                # Základná farba čiary
+                # Základná farba a šírka čiary
                 color = QColor(0, 150, 255)
                 width = 2
+                is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 1)
                 
-                # Zvýraznenie ak je segment vybraný alebo pod myšou
+                # Logika zvýraznenia (hover/selection má prioritu pred gradientom)
                 if i == self.selected_segment_idx:
-                    color = QColor(255, 100, 0)
-                    width = 4
+                    painter.setPen(QPen(QColor(255, 100, 0), 4))
                 elif i == self.hovered_segment_idx:
-                    color = QColor(0, 255, 255)
-                    width = 3
+                    painter.setPen(QPen(QColor(0, 255, 255), 3))
+                elif is_closing_segment:
+                    # Špeciálny gradient pre poslednú čiaru (uzatvárací segment)
+                    gradient = QLinearGradient(p1, p2)
+                    gradient.setColorAt(0, QColor(0, 150, 255))   # Štart: Modrá
+                    gradient.setColorAt(0.8, QColor(200, 50, 50)) # Prechod: Červenkastá
+                    gradient.setColorAt(1.0, QColor(255, 0, 0))   # Koniec: Čistá červená
+                    
+                    pen = QPen(QBrush(gradient), 2)
+                    painter.setPen(pen)
+                else:
+                    painter.setPen(QPen(color, width))
                 
-                painter.setPen(QPen(color, width))
                 painter.drawLine(p1, p2)
 
             for i, pt in enumerate(self.points):
