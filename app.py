@@ -187,7 +187,7 @@ class NGonCanvas(QWidget):
             self.setCursor(Qt.ClosedHandCursor)
             return
 
-        # Výber alebo tvorba bodu
+        # Výber existujúceho bodu
         hit_index = -1
         for i, pt in enumerate(self.points):
             dist = (self.to_screen(pt) - event.position()).manhattanLength()
@@ -196,15 +196,21 @@ class NGonCanvas(QWidget):
                 break
         
         if hit_index != -1:
+            # Ak sme klikli na bod, označíme ho a pripravíme na ťahanie
             self.selected_index = hit_index
             self.dragging_point_idx = hit_index
             self.selectionChanged.emit(hit_index)
-        else:
+        elif event.modifiers() & Qt.ControlModifier:
+            # Nový bod sa vytvorí LEN ak držíme Ctrl
             new_pt = self.apply_snap(world_pos)
             self.points.append(new_pt)
             self.selected_index = len(self.points) - 1
             self.pointsChanged.emit(self.points)
             self.selectionChanged.emit(self.selected_index)
+        else:
+            # Kliknutie do prázdna bez Ctrl zruší aktuálny výber
+            self.selected_index = -1
+            self.selectionChanged.emit(-1)
         
         self.update()
 
