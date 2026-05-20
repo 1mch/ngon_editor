@@ -17,6 +17,13 @@ class NGonCanvas(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
 
+        # Konfigurácia zoomu a mriežky
+        self.CONFIG = {
+            "MAX_ZOOM_IN": 20.0,
+            "MAX_ZOOM_OUT": 0.10,
+            "GRID_1_THRESHOLD": 1.0  # Pod túto hodnotu zoomu sa 1x mriežka skryje
+        }
+
         # Body n-gonu
         self.points = []
         self.selected_index = -1
@@ -107,14 +114,15 @@ class NGonCanvas(QWidget):
         start_y = int(bottom_right.y()) - 1
         end_y = int(top_left.y()) + 1
 
-        for x in range(start_x, end_x):
-            self.draw_grid_line(painter, x, True)
-        for y in range(start_y, end_y):
-            self.draw_grid_line(painter, y, False)
+        # Určenie, či je zoom dostatočný na zobrazenie 1x mriežky
+        can_show_grid_1 = self.show_grid_1 and (self.zoom_level > self.CONFIG["GRID_1_THRESHOLD"])
 
-    def draw_grid_line(self, painter, val, is_vertical):
-        if val == 0: return
-        
+        for x in range(start_x, end_x):
+            self.draw_grid_line(painter, x, True, can_show_grid_1)
+        for y in range(start_y, end_y):
+            self.draw_grid_line(painter, y, False, can_show_grid_1)
+
+    def draw_grid_line(self, painter, val, is_vertical, can_show_grid_1):
         # Logika viditeľnosti mriežky
         is_10 = (val % 10 == 0)
         is_5 = (val % 5 == 0)
@@ -126,7 +134,7 @@ class NGonCanvas(QWidget):
             if not self.show_grid_5: return
             painter.setPen(QPen(QColor(55, 55, 55), 1))
         else:
-            if not self.show_grid_1: return
+            if not can_show_grid_1: return
             painter.setPen(QPen(QColor(40, 40, 40), 1))
             
         p1_w = QPointF(val, self.to_world(QPointF(0, self.height())).y()) if is_vertical else QPointF(self.to_world(QPointF(0, 0)).x(), val)
@@ -155,12 +163,18 @@ class NGonCanvas(QWidget):
     def wheelEvent(self, event: QWheelEvent):
         # Zoom centrovaný na kurzor myši
         mouse_before = self.to_world(event.position())
-        zoom_factor = 1.15 if event.angleDelta().y() > 0 else 1/1.15
-        self.zoom_level *= zoom_factor
         
-        # Upravíme pan_offset, aby bod pod myšou zostal na mieste
+        zoom_factor = 1.15 if event.angleDelta().y() > 0 else 1/1.15
+        new_zoom = self.zoom_level * zoom_factor
+        
+        # Aplikácia limitov z CONFIG
+        new_zoom = max(self.CONFIG["MAX_ZOOM_OUT"], min(self.CONFIG["MAX_ZOOM_IN"], new_zoom))
+        
+        # Prepíšeme zoom_level a upravíme pan_offset, aby bod pod myšou zostal na mieste
+        self.zoom_level = new_zoom
         mouse_after = self.to_world(event.position())
         self.pan_offset += (mouse_after - mouse_before)
+        
         self.update()
 
     def mousePressEvent(self, event: QMouseEvent):
