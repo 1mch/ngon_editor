@@ -56,6 +56,9 @@ class NGonCanvas(QWidget):
         self.selected_segment_idx = -1
         self.dragging_segment_idx = -1
         self.last_world_pos = QPointF()
+        
+        self.hovered_point_idx = -1
+        self.hovered_segment_idx = -1
 
     def get_scale(self):
         """Vypočíta aktuálnu mierku zohľadňujúcu šírku okna a zoom."""
@@ -110,7 +113,42 @@ class NGonCanvas(QWidget):
                 p1 = self.to_screen(self.points[p1_idx])
                 p2 = self.to_screen(self.points[p2_idx])
                 
-                # Základná farba a šírka čiary
+                is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 1)
+                
+                # Logika farieb segmentu (priorita: selection > hover > gradient/default)
+                if i == self.selected_segment_idx:
+                    painter.setPen(QPen(QColor(255, 140, 0), 4)) # Orange Selection
+                elif i == self.hovered_segment_idx:
+                    painter.setPen(QPen(QColor(255, 255, 0), 3)) # Yellow Hover
+                elif is_closing_segment:
+                    gradient = QLinearGradient(p1, p2)
+                    gradient.setColorAt(0, QColor(0, 150, 255))
+                    gradient.setColorAt(0.8, QColor(200, 50, 50))
+                    gradient.setColorAt(1.0, QColor(255, 0, 0))
+                    painter.setPen(QPen(QBrush(gradient), 2))
+                else:
+                    painter.setPen(QPen(QColor(0, 150, 255), 2))
+                
+                painter.drawLine(p1, p2)
+
+            for i, pt in enumerate(self.points):
+                screen_pt = self.to_screen(pt)
+                
+                # Farba bodu
+                if i == self.selected_index:
+                    color = QColor(255, 140, 0) # Orange Selection
+                    size = 5
+                elif i == self.hovered_point_idx:
+                    color = QColor(255, 255, 0) # Yellow Hover
+                    size = 5
+                else:
+                    color = QColor(255, 255, 255) # Default White
+                    size = 4
+                    
+                painter.setBrush(QBrush(color))
+                painter.setPen(QPen(QColor(0, 0, 0), 1) if size > 4 else Qt.NoPen)
+                painter.drawEllipse(screen_pt, size, size)
+
                 color = QColor(0, 150, 255)
                 width = 2
                 is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 1)
@@ -310,11 +348,21 @@ class NGonCanvas(QWidget):
             self.update()
             return
 
-        # Detekcia hoveru nad segmentom (keď sa nič neťahá)
-        old_hover = self.hovered_segment_idx
+        old_h_point = self.hovered_point_idx
+        old_h_segment = self.hovered_segment_idx
+        
+        self.hovered_point_idx = -1
         self.hovered_segment_idx = -1
         
-        if len(self.points) >= 2:
+        # 1. Kontrola hoveru nad bodmi (má prioritu)
+        for i, pt in enumerate(self.points):
+            dist = (self.to_screen(pt) - event.position()).manhattanLength()
+            if dist < 12:
+                self.hovered_point_idx = i
+                break
+        
+        # 2. Kontrola hoveru nad segmentmi (len ak nie sme nad bodom)
+        if self.hovered_point_idx == -1 and len(self.points) >= 2:
             mouse_px = event.position()
             for i in range(len(self.points)):
                 p1 = self.to_screen(self.points[i])
@@ -323,7 +371,7 @@ class NGonCanvas(QWidget):
                     self.hovered_segment_idx = i
                     break
         
-        if old_hover != self.hovered_segment_idx:
+        if old_h_point != self.hovered_point_idx or old_h_segment != self.hovered_segment_idx:
             self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
