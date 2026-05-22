@@ -174,13 +174,13 @@ class NGonCanvas(QWidget):
         
         if is_10:
             # Hlavná mriežka každých 10 jednotiek (výraznejšia sivá)
-            painter.setPen(QPen(QColor(75, 75, 75), 1))
+            painter.setPen(QPen(QColor(45, 45, 45), 1))
         else:
             # Ak je to 1-jednotková mriežka a nemáme dostatočný zoom, nevykreslíme ju
             if not can_show_sub_grid:
                 return
             # Slabšia mriežka každú 1 jednotku (veľmi jemná sivá)
-            painter.setPen(QPen(QColor(38, 38, 38), 1))
+            painter.setPen(QPen(QColor(30, 30, 30), 1))
             
         p1_w = QPointF(val, self.to_world(QPointF(0, self.height())).y()) if is_vertical else QPointF(self.to_world(QPointF(0, 0)).x(), val)
         p2_w = QPointF(val, self.to_world(QPointF(0, 0)).y()) if is_vertical else QPointF(self.to_world(QPointF(self.width(), 0)).x(), val)
@@ -345,6 +345,10 @@ class NGonCanvas(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Delete and self.selected_index != -1:
+            self.delete_selected_point()
+
+    def delete_selected_point(self):
+        if self.selected_index != -1 and 0 <= self.selected_index < len(self.points):
             self.points.pop(self.selected_index)
             self.selected_index = -1
             self.pointsChanged.emit(self.points)
@@ -420,9 +424,11 @@ class MainWindow(QMainWindow):
         safe_layout.addWidget(QLabel("Dolná (D):"), 4, 0); safe_layout.addWidget(self.spn_d, 4, 1)
         right_layout.addWidget(safe_group)
 
-        # 4. Zoznam vrcholov
+        # 4. Zoznam vrcholov (Outliner)
         right_layout.addWidget(QLabel("Zoznam bodov (Outliner):"))
         self.outliner = QListWidget()
+        # Inštalácia event filtra na zachytávanie klávesov priamo v Outlineri
+        self.outliner.installEventFilter(self)
         right_layout.addWidget(self.outliner)
 
         self.setup_connections()
@@ -447,6 +453,14 @@ class MainWindow(QMainWindow):
         self.chk_safe_enable.stateChanged.connect(self.update_canvas_settings)
         for s in [self.spn_l, self.spn_r, self.spn_u, self.spn_d]:
             s.valueChanged.connect(self.update_canvas_settings)
+
+    def eventFilter(self, watched, event):
+        """Zachytí stlačenie klávesu Delete, ak má focus Outliner."""
+        if watched == self.outliner and event.type() == QKeyEvent.Type.KeyPress:
+            if event.key() == Qt.Key_Delete:
+                self.canvas.delete_selected_point()
+                return True
+        return super().eventFilter(watched, event)
 
     def update_canvas_settings(self):
         # Načítanie stavu hlavného prepínača mriežky
@@ -492,6 +506,7 @@ class MainWindow(QMainWindow):
 
     def sync_selection_to_canvas(self, index):
         self.canvas.selected_index = index
+        self.canvas.selected_segment_idx = -1  # Výber v outlineri zruší označenie hrany (identické s kliknutím na bod)
         self.canvas.update()
 
 if __name__ == "__main__":
