@@ -17,37 +17,34 @@ class NGonCanvas(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
 
-        # Konfigurácia zoomu a mriežky
+        # Konfigurácia priblíženia (zoomu) a prahu pre slabšiu mriežku
         self.CONFIG = {
             "MAX_ZOOM_IN": 15.0,
             "MAX_ZOOM_OUT": 0.30,
-            "GRID_1_THRESHOLD": 2.5,  # Pod túto hodnotu zoomu sa 1x mriežka skryje
-            "GRID_5_THRESHOLD": 1.0   # Pod túto hodnotu zoomu sa 5x mriežka skryje
+            "GRID_SUB_THRESHOLD": 2.0  # Pod tento zoom sa slabšia (1-jednotková) mriežka skryje
         }
 
-        # Body n-gonu
+        # Body n-uholníka
         self.points = []
         self.selected_index = -1
         
-        # Transformácia a zobrazenie
+        # Transformácia a posun zobrazenia
         self.pan_offset = QPointF(0, 0)
         self.zoom_level = 1.0
         self.target_width_units = 500.0
         
-        # Nastavenia gridu a viditeľnosti
+        # Nastavenia prichytávania a zobrazenia prkov
         self.snap_x = False
         self.snap_y = False
-        self.show_grid_1 = True
-        self.show_grid_5 = True
-        self.show_grid_10 = True
+        self.show_grid = True  # Jeden hlavný vypínač pre mriežku
         self.show_axes = True
         
-        # Safe Region nastavenia
+        # Nastavenie bezpečnej zóny (Safe Region)
         self.safe_enabled = False
         self.safe_l, self.safe_r = -100.0, 100.0
         self.safe_u, self.safe_d = 100.0, -100.0
         
-        # Stav myši
+        # Stavové premenné pre interakciu s myšou
         self.last_mouse_pos = QPointF()
         self.is_panning = False
         self.dragging_point_idx = -1
@@ -60,10 +57,11 @@ class NGonCanvas(QWidget):
         self.hovered_point_idx = -1
 
     def get_scale(self):
-        """Vypočíta aktuálnu mierku zohľadňujúcu šírku okna a zoom."""
+        """Vypočíta mierku na základe aktuálnej šírky okna a zoomu."""
         return (self.width() / self.target_width_units) * self.zoom_level
 
     def to_screen(self, world_pt):
+        """Prepočíta súradnice zo sveta na obrazovku."""
         center = self.rect().center()
         scale = self.get_scale()
         screen_x = center.x() + (world_pt.x() + self.pan_offset.x()) * scale
@@ -71,6 +69,7 @@ class NGonCanvas(QWidget):
         return QPointF(screen_x, screen_y)
 
     def to_world(self, screen_pt):
+        """Prepočíta súradnice z obrazovky do sveta."""
         center = self.rect().center()
         scale = self.get_scale()
         world_x = (screen_pt.x() - center.x()) / scale - self.pan_offset.x()
@@ -78,12 +77,13 @@ class NGonCanvas(QWidget):
         return QPointF(world_x, world_y)
 
     def apply_snap(self, pt):
+        """Aplikuje prichytávanie bodu k celočíselnej mriežke."""
         x = round(pt.x()) if self.snap_x else pt.x()
         y = round(pt.y()) if self.snap_y else pt.y()
         return QPointF(x, y)
 
     def dist_to_segment(self, p, a, b):
-        """Vráti vzdialenosť bodu P od úsečky AB v pixeloch."""
+        """Vráti najkratšiu vzdialenosť bodu P od úsečky AB v pixeloch."""
         pa = p - a
         ba = b - a
         dot = QPointF.dotProduct(pa, ba)
@@ -96,21 +96,22 @@ class NGonCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(25, 25, 25))
 
-        # 1. Vykreslenie mriežky
-        self.draw_grid(painter)
+        # 1. Vykreslenie mriežky (len ak je povolená)
+        if self.show_grid:
+            self.draw_grid(painter)
         
         # 2. Vykreslenie osí
         if self.show_axes:
             self.draw_axes(painter)
 
-        # 3. Vykreslenie Safe Regionu
+        # 3. Vykreslenie bezpečnej zóny
         if self.safe_enabled:
             self.draw_safe_region(painter)
 
         if len(self.points) == 0:
             return
 
-        # 4. JEDEN čistý cyklus na vykreslenie čiar (segmentov)
+        # 4. Vykreslenie čiar (segmentov)
         for i in range(len(self.points)):
             p1 = self.to_screen(self.points[i])
             p2 = self.to_screen(self.points[(i + 1) % len(self.points)])
@@ -118,32 +119,33 @@ class NGonCanvas(QWidget):
             is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 1)
             
             if i == self.selected_segment_idx:
-                painter.setPen(QPen(QColor(255, 140, 0), 4))  # Orange Selection
+                painter.setPen(QPen(QColor(255, 140, 0), 4))  # Oranžový výber
             elif i == self.hovered_segment_idx:
-                painter.setPen(QPen(QColor(255, 255, 0), 3))  # Yellow Hover
+                painter.setPen(QPen(QColor(255, 255, 0), 3))  # Žltý hover
             elif is_closing_segment:
+                # Farebný prechod pre uzatváraciu čiaru
                 gradient = QLinearGradient(p1, p2)
                 gradient.setColorAt(0.0, QColor(0, 150, 255))
                 gradient.setColorAt(0.8, QColor(200, 50, 50))
                 gradient.setColorAt(1.0, QColor(255, 0, 0))
                 painter.setPen(QPen(QBrush(gradient), 2))
             else:
-                painter.setPen(QPen(QColor(0, 150, 255), 2))
+                painter.setPen(QPen(QColor(0, 150, 255), 2))  # Bežná modrá čiara
             
             painter.drawLine(p1, p2)
 
-        # 5. JEDEN čistý cyklus na vykreslenie bodov (vrcholov) nad čiarami
+        # 5. Vykreslenie bodov (vrcholov) nad čiarami
         for i, pt in enumerate(self.points):
             screen_pt = self.to_screen(pt)
             
             if i == self.selected_index:
-                color = QColor(255, 140, 0)  # Orange Selection
+                color = QColor(255, 140, 0)  # Oranžový vybratý bod
                 size = 5
             elif i == self.hovered_point_idx:
-                color = QColor(255, 255, 0)  # Yellow Hover
+                color = QColor(255, 255, 0)  # Žltý zameraný bod
                 size = 5
             else:
-                color = QColor(255, 255, 255)  # Default White
+                color = QColor(255, 255, 255)  # Biely predvolený bod
                 size = 4
                 
             painter.setBrush(QBrush(color))
@@ -159,27 +161,26 @@ class NGonCanvas(QWidget):
         start_y = int(bottom_right.y()) - 1
         end_y = int(top_left.y()) + 1
 
-        can_show_grid_1 = self.show_grid_1 and (self.zoom_level > self.CONFIG["GRID_1_THRESHOLD"])
-        can_show_grid_5 = self.show_grid_5 and (self.zoom_level > self.CONFIG["GRID_5_THRESHOLD"])
+        # Rozhodnutie, či priblíženie povoľuje vykresliť aj jemnú 1-jednotkovú mriežku
+        can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
 
         for x in range(start_x, end_x):
-            self.draw_grid_line(painter, x, True, can_show_grid_1, can_show_grid_5)
+            self.draw_grid_line(painter, x, True, can_show_sub_grid)
         for y in range(start_y, end_y):
-            self.draw_grid_line(painter, y, False, can_show_grid_1, can_show_grid_5)
+            self.draw_grid_line(painter, y, False, can_show_sub_grid)
 
-    def draw_grid_line(self, painter, val, is_vertical, can_show_grid_1, can_show_grid_5):
+    def draw_grid_line(self, painter, val, is_vertical, can_show_sub_grid):
         is_10 = (val % 10 == 0)
-        is_5 = (val % 5 == 0)
         
         if is_10:
-            if not self.show_grid_10: return
-            painter.setPen(QPen(QColor(80, 80, 80), 1))
-        elif is_5:
-            if not can_show_grid_5: return
-            painter.setPen(QPen(QColor(55, 55, 55), 1))
+            # Hlavná mriežka každých 10 jednotiek (výraznejšia sivá)
+            painter.setPen(QPen(QColor(75, 75, 75), 1))
         else:
-            if not can_show_grid_1: return
-            painter.setPen(QPen(QColor(40, 40, 40), 1))
+            # Ak je to 1-jednotková mriežka a nemáme dostatočný zoom, nevykreslíme ju
+            if not can_show_sub_grid:
+                return
+            # Slabšia mriežka každú 1 jednotku (veľmi jemná sivá)
+            painter.setPen(QPen(QColor(38, 38, 38), 1))
             
         p1_w = QPointF(val, self.to_world(QPointF(0, self.height())).y()) if is_vertical else QPointF(self.to_world(QPointF(0, 0)).x(), val)
         p2_w = QPointF(val, self.to_world(QPointF(0, 0)).y()) if is_vertical else QPointF(self.to_world(QPointF(self.width(), 0)).x(), val)
@@ -188,10 +189,10 @@ class NGonCanvas(QWidget):
 
     def draw_axes(self, painter):
         zero = self.to_screen(QPointF(0, 0))
-        # X Axis
+        # X os (Červená)
         painter.setPen(QPen(QColor(200, 50, 50, 180), 2))
         painter.drawLine(0, zero.y(), self.width(), zero.y())
-        # Y Axis
+        # Y os (Zelená)
         painter.setPen(QPen(QColor(50, 200, 50, 180), 2))
         painter.drawLine(zero.x(), 0, zero.x(), self.height())
 
@@ -205,6 +206,7 @@ class NGonCanvas(QWidget):
         painter.drawRect(rect)
 
     def wheelEvent(self, event: QWheelEvent):
+        # Zoom centrovaný na kurzor myši
         mouse_before = self.to_world(event.position())
         zoom_factor = 1.15 if event.angleDelta().y() > 0 else 1/1.15
         new_zoom = self.zoom_level * zoom_factor
@@ -219,12 +221,14 @@ class NGonCanvas(QWidget):
         world_pos = self.to_world(event.position())
         self.last_world_pos = world_pos
         
+        # Posúvanie pohľadu (Stredné tlačidlo ALEBO Alt + Ľavé tlačidlo)
         if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and event.modifiers() & Qt.AltModifier):
             self.is_panning = True
             self.last_mouse_pos = event.position()
             self.setCursor(Qt.ClosedHandCursor)
             return
 
+        # 1. Výber existujúceho bodu
         hit_index = -1
         for i, pt in enumerate(self.points):
             dist = (self.to_screen(pt) - event.position()).manhattanLength()
@@ -240,8 +244,10 @@ class NGonCanvas(QWidget):
             self.update()
             return
 
+        # 2. Kliknutie na segment (čiara)
         if self.hovered_segment_idx != -1:
             if event.modifiers() & Qt.ControlModifier:
+                # Vloženie nového bodu do vybratej čiary
                 new_pt = self.apply_snap(world_pos)
                 self.points.insert(self.hovered_segment_idx + 1, new_pt)
                 self.selected_index = self.hovered_segment_idx + 1
@@ -249,6 +255,7 @@ class NGonCanvas(QWidget):
                 self.pointsChanged.emit(self.points)
                 self.selectionChanged.emit(self.selected_index)
             else:
+                # Označenie segmentu na posunutie celej hrany
                 self.selected_segment_idx = self.hovered_segment_idx
                 self.dragging_segment_idx = self.hovered_segment_idx
                 self.selected_index = -1
@@ -256,6 +263,7 @@ class NGonCanvas(QWidget):
             self.update()
             return
 
+        # 3. Pridanie nového bodu na koniec (len s Ctrl)
         if event.modifiers() & Qt.ControlModifier:
             new_pt = self.apply_snap(world_pos)
             self.points.append(new_pt)
@@ -309,12 +317,14 @@ class NGonCanvas(QWidget):
         self.hovered_point_idx = -1
         self.hovered_segment_idx = -1
         
+        # Kontrola prechodu myši nad bodmi
         for i, pt in enumerate(self.points):
             dist = (self.to_screen(pt) - event.position()).manhattanLength()
             if dist < 12:
                 self.hovered_point_idx = i
                 break
         
+        # Kontrola prechodu myši nad hranami
         if self.hovered_point_idx == -1 and len(self.points) >= 2:
             mouse_px = event.position()
             for i in range(len(self.points)):
@@ -344,7 +354,7 @@ class NGonCanvas(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("NGon Editor Pro - Advanced")
+        self.setWindowTitle("NGon Editor Pro - Pokročilý editor")
         self.resize(1200, 800)
         self.setStyleSheet("QMainWindow { background-color: #252525; } QGroupBox { color: #aaa; font-weight: bold; }")
 
@@ -352,83 +362,95 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(main_widget)
         layout = QHBoxLayout(main_widget)
 
+        # Hlavná časť so záložkami
         self.tabs = QTabWidget()
         self.canvas = NGonCanvas()
-        self.tabs.addTab(self.canvas, "Design Canvas")
+        self.tabs.addTab(self.canvas, "Návrhové plátno")
         
         self.json_view = QTextEdit()
         self.json_view.setReadOnly(True)
         self.json_view.setStyleSheet("background-color: #1e1e1e; color: #9cdcfe; font-family: 'Consolas';")
-        self.tabs.addTab(self.json_view, "JavaScript Output")
+        self.tabs.addTab(self.json_view, "JavaScript výstup")
         layout.addWidget(self.tabs, stretch=4)
 
+        # Bočný ovládací panel
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         layout.addWidget(right_panel, stretch=1)
 
-        vis_group = QGroupBox("View Options")
+        # 1. Možnosti zobrazenia (Mriežka a osi)
+        vis_group = QGroupBox("Možnosti zobrazenia")
         vis_layout = QVBoxLayout(vis_group)
-        self.chk_grid_1 = QCheckBox("Show Grid 1x"); self.chk_grid_1.setChecked(True)
-        self.chk_grid_5 = QCheckBox("Show Grid 5x"); self.chk_grid_5.setChecked(True)
-        self.chk_grid_10 = QCheckBox("Show Grid 10x"); self.chk_grid_10.setChecked(True)
-        self.chk_axes = QCheckBox("Show Axes"); self.chk_axes.setChecked(True)
-        for w in [self.chk_grid_1, self.chk_grid_5, self.chk_grid_10, self.chk_axes]: vis_layout.addWidget(w)
+        
+        # Jediný globálny prepínač pre mriežku
+        self.chk_grid_master = QCheckBox("Zobraziť mriežku")
+        self.chk_grid_master.setChecked(True)
+        vis_layout.addWidget(self.chk_grid_master)
+        
+        self.chk_axes = QCheckBox("Zobraziť hlavné osi")
+        self.chk_axes.setChecked(True)
+        vis_layout.addWidget(self.chk_axes)
+            
         right_layout.addWidget(vis_group)
 
-        snap_group = QGroupBox("Snapping")
+        # 2. Nastavenia prichytávania
+        snap_group = QGroupBox("Prichytávanie (Snap)")
         snap_layout = QGridLayout(snap_group)
-        self.check_snap_x = QCheckBox("Snap X")
-        self.check_snap_y = QCheckBox("Snap Y")
-        self.check_snap_both = QCheckBox("Snap Both")
+        self.check_snap_x = QCheckBox("Prichytiť na X")
+        self.check_snap_y = QCheckBox("Prichytiť na Y")
+        self.check_snap_both = QCheckBox("Prichytiť na obe osi")
         snap_layout.addWidget(self.check_snap_x, 0, 0)
         snap_layout.addWidget(self.check_snap_y, 0, 1)
         snap_layout.addWidget(self.check_snap_both, 1, 0, 1, 2)
         right_layout.addWidget(snap_group)
 
-        safe_group = QGroupBox("Safe Region")
+        # 3. Nastavenie bezpečnej zóny
+        safe_group = QGroupBox("Bezpečná zóna")
         safe_layout = QGridLayout(safe_group)
-        self.chk_safe_enable = QCheckBox("Enable Safe Region")
+        self.chk_safe_enable = QCheckBox("Povoliť bezpečnú zónu")
         self.spn_l = QDoubleSpinBox(); self.spn_l.setRange(-1000, 1000); self.spn_l.setValue(-100)
         self.spn_r = QDoubleSpinBox(); self.spn_r.setRange(-1000, 1000); self.spn_r.setValue(100)
         self.spn_u = QDoubleSpinBox(); self.spn_u.setRange(-1000, 1000); self.spn_u.setValue(100)
         self.spn_d = QDoubleSpinBox(); self.spn_d.setRange(-1000, 1000); self.spn_d.setValue(-100)
         
         safe_layout.addWidget(self.chk_safe_enable, 0, 0, 1, 2)
-        safe_layout.addWidget(QLabel("L:"), 1, 0); safe_layout.addWidget(self.spn_l, 1, 1)
-        safe_layout.addWidget(QLabel("R:"), 2, 0); safe_layout.addWidget(self.spn_r, 2, 1)
-        safe_layout.addWidget(QLabel("U:"), 3, 0); safe_layout.addWidget(self.spn_u, 3, 1)
-        safe_layout.addWidget(QLabel("D:"), 4, 0); safe_layout.addWidget(self.spn_d, 4, 1)
+        safe_layout.addWidget(QLabel("Ľavá (L):"), 1, 0); safe_layout.addWidget(self.spn_l, 1, 1)
+        safe_layout.addWidget(QLabel("Pravá (R):"), 2, 0); safe_layout.addWidget(self.spn_r, 2, 1)
+        safe_layout.addWidget(QLabel("Horná (U):"), 3, 0); safe_layout.addWidget(self.spn_u, 3, 1)
+        safe_layout.addWidget(QLabel("Dolná (D):"), 4, 0); safe_layout.addWidget(self.spn_d, 4, 1)
         right_layout.addWidget(safe_group)
 
-        right_layout.addWidget(QLabel("Points Outliner:"))
+        # 4. Zoznam vrcholov
+        right_layout.addWidget(QLabel("Zoznam bodov (Outliner):"))
         self.outliner = QListWidget()
         right_layout.addWidget(self.outliner)
 
         self.setup_connections()
         self.update_ui([])
+        self.update_canvas_settings() # Inicializácia stavu zaškrtávadiel
 
     def setup_connections(self):
         self.canvas.pointsChanged.connect(self.update_ui)
         self.canvas.selectionChanged.connect(self.sync_selection_to_ui)
         self.outliner.currentRowChanged.connect(self.sync_selection_to_canvas)
         
-        self.chk_grid_1.stateChanged.connect(self.update_canvas_settings)
-        self.chk_grid_5.stateChanged.connect(self.update_canvas_settings)
-        self.chk_grid_10.stateChanged.connect(self.update_canvas_settings)
+        # Prepojenie zobrazenia
+        self.chk_grid_master.stateChanged.connect(self.update_canvas_settings)
         self.chk_axes.stateChanged.connect(self.update_canvas_settings)
         
+        # Prepojenie prichytávania
         self.check_snap_x.stateChanged.connect(self.update_canvas_settings)
         self.check_snap_y.stateChanged.connect(self.update_canvas_settings)
         self.check_snap_both.stateChanged.connect(self.toggle_both_snap)
 
+        # Prepojenie bezpečnej zóny
         self.chk_safe_enable.stateChanged.connect(self.update_canvas_settings)
         for s in [self.spn_l, self.spn_r, self.spn_u, self.spn_d]:
             s.valueChanged.connect(self.update_canvas_settings)
 
     def update_canvas_settings(self):
-        self.canvas.show_grid_1 = self.chk_grid_1.isChecked()
-        self.canvas.show_grid_5 = self.chk_grid_5.isChecked()
-        self.canvas.show_grid_10 = self.chk_grid_10.isChecked()
+        # Načítanie stavu hlavného prepínača mriežky
+        self.canvas.show_grid = self.chk_grid_master.isChecked()
         self.canvas.show_axes = self.chk_axes.isChecked()
         
         self.canvas.snap_x = self.check_snap_x.isChecked()
@@ -442,7 +464,7 @@ class MainWindow(QMainWindow):
         self.canvas.update()
 
     def toggle_both_snap(self, state):
-        # Opravená kompatibilita pre PySide6 check state enum
+        # Správne ošetrenie CheckState pre verziu PySide6
         is_checked = (state == Qt.CheckState.Checked.value or state == 2)
         self.check_snap_x.setChecked(is_checked)
         self.check_snap_y.setChecked(is_checked)
@@ -453,7 +475,7 @@ class MainWindow(QMainWindow):
         self.outliner.clear()
         json_data = []
         for i, pt in enumerate(points):
-            self.outliner.addItem(f"P{i}: [{pt.x():.1f}, {pt.y():.1f}]")
+            self.outliner.addItem(f"Bod {i}: [{pt.x():.1f}, {pt.y():.1f}]")
             json_data.append({"x": round(pt.x(), 2), "y": round(pt.y(), 2)})
         
         if self.canvas.selected_index != -1:
