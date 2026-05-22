@@ -1,8 +1,8 @@
 ================================================================================
-                                NGon Editor Pro
+                                  NGon Editor
 ================================================================================
 
-NGon Editor Pro je špecializovaný vizuálny nástroj napísaný v jazyku Python 
+NGon Editor je špecializovaný vizuálny nástroj napísaný v jazyku Python 
 (PySide6), určený na presné definovanie bodov n-uholníkov (polygonov). Aplikácia 
 poskytuje intuitívne grafické rozhranie s matematickým súradnicovým systémom, 
 mriežkou a exportom do JavaScriptu v reálnom čase.

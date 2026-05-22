@@ -3,10 +3,37 @@ import json
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QTabWidget, QListWidget, QCheckBox, QLabel, QGroupBox, 
-    QTextEdit, QDoubleSpinBox, QGridLayout
+    QTextEdit, QDoubleSpinBox, QGridLayout, QDialog, QFormLayout, QDialogButtonBox
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import QLinearGradient, QPainter, QColor, QPen, QBrush, QKeyEvent, QMouseEvent, QWheelEvent
+
+class CoordinateDialog(QDialog):
+    def __init__(self, x, y, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Upraviť súradnice")
+        layout = QFormLayout(self)
+
+        # Polia pre zadávanie čísiel
+        self.spn_x = QDoubleSpinBox()
+        self.spn_x.setRange(-10000, 10000)
+        self.spn_x.setValue(x)
+        
+        self.spn_y = QDoubleSpinBox()
+        self.spn_y.setRange(-10000, 10000)
+        self.spn_y.setValue(y)
+
+        layout.addRow("Súradnica X:", self.spn_x)
+        layout.addRow("Súradnica Y:", self.spn_y)
+
+        # Tlačidlá OK a Cancel
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addRow(self.buttons)
+
+    def get_values(self):
+        return self.spn_x.value(), self.spn_y.value()
 
 class NGonCanvas(QWidget):
     pointsChanged = Signal(list)
@@ -76,11 +103,19 @@ class NGonCanvas(QWidget):
         world_x = (screen_pt.x() - center.x()) / scale - self.pan_offset.x()
         world_y = (center.y() - screen_pt.y()) / scale - self.pan_offset.y()
         return QPointF(world_x, world_y)
-
+    
     def apply_snap(self, pt):
-        """Aplikuje prichytávanie bodu k celočíselnej mriežke."""
-        x = round(pt.x()) if self.snap_x else pt.x()
-        y = round(pt.y()) if self.snap_y else pt.y()
+        """Aplikuje prichytávanie bodu podľa aktuálne viditeľnej mriežky."""
+        # Zistíme, či je zobrazená len 10-ková mriežka (rovnaká podmienka ako v draw_grid)
+        can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
+        
+        # Ak vidíme jemnú mriežku, krok je 1. Ak vidíme len hlavnú, krok je 10.
+        step = 1.0 if can_show_sub_grid else 10.0
+
+        # Výpočet súradníc vydelením krokom, zaokrúhlením a vynásobením späť
+        x = round(pt.x() / step) * step if self.snap_x else pt.x()
+        y = round(pt.y() / step) * step if self.snap_y else pt.y()
+        
         return QPointF(x, y)
 
     def dist_to_segment(self, p, a, b):
@@ -359,6 +394,33 @@ class NGonCanvas(QWidget):
         
         if old_h_point != self.hovered_point_idx or old_h_segment != self.hovered_segment_idx:
             self.update()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        # 1. Zistíme, či sme klikli na nejaký bod
+        hit_index = -1
+        for i, pt in enumerate(self.points):
+            # Prepočet bodu na obrazovku a kontrola vzdialenosti kurzora
+            dist = (self.to_screen(pt) - event.position()).manhattanLength()
+            if dist < 12:
+                hit_index = i
+                break
+
+        # 2. Ak sme klikli na bod a je to ten, ktorý je práve vybratý
+        if hit_index != -1 and hit_index == self.selected_index:
+            pt = self.points[hit_index]
+            
+            # Otvorenie dialógu s aktuálnymi súradnicami
+            dialog = CoordinateDialog(pt.x(), pt.y(), self)
+            
+            if dialog.exec() == QDialog.Accepted:
+                new_x, new_y = dialog.get_values()
+                
+                # Aktualizácia bodu (tu môžeme obísť snap, keďže zadávame presné čísla)
+                self.points[hit_index] = QPointF(new_x, new_y)
+                
+                # Informovanie systému o zmene a prekreslenie
+                self.pointsChanged.emit(self.points)
+                self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         self.is_panning = False
