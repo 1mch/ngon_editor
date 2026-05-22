@@ -22,7 +22,7 @@ class NGonCanvas(QWidget):
             "MAX_ZOOM_IN": 15.0,
             "MAX_ZOOM_OUT": 0.30,
             "GRID_1_THRESHOLD": 2.5,  # Pod túto hodnotu zoomu sa 1x mriežka skryje
-            "GRID_5_THRESHOLD": 1   # Pod túto hodnotu zoomu sa 5x mriežka skryje
+            "GRID_5_THRESHOLD": 1.0   # Pod túto hodnotu zoomu sa 5x mriežka skryje
         }
 
         # Body n-gonu
@@ -58,7 +58,6 @@ class NGonCanvas(QWidget):
         self.last_world_pos = QPointF()
         
         self.hovered_point_idx = -1
-        self.hovered_segment_idx = -1
 
     def get_scale(self):
         """Vypočíta aktuálnu mierku zohľadňujúcu šírku okna a zoom."""
@@ -87,7 +86,9 @@ class NGonCanvas(QWidget):
         """Vráti vzdialenosť bodu P od úsečky AB v pixeloch."""
         pa = p - a
         ba = b - a
-        t = max(0, min(1, QPointF.dotProduct(pa, ba) / QPointF.dotProduct(ba, ba)))
+        dot = QPointF.dotProduct(pa, ba)
+        mag = QPointF.dotProduct(ba, ba)
+        t = max(0.0, min(1.0, dot / mag if mag != 0 else 0.0))
         return (pa - ba * t).manhattanLength()
 
     def paintEvent(self, event):
@@ -106,78 +107,48 @@ class NGonCanvas(QWidget):
         if self.safe_enabled:
             self.draw_safe_region(painter)
 
-        if len(self.points) > 0:
-            for i in range(len(self.points)):
-                p1_idx = i
-                p2_idx = (i + 1) % len(self.points)
-                p1 = self.to_screen(self.points[p1_idx])
-                p2 = self.to_screen(self.points[p2_idx])
-                
-                is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 1)
-                
-                # Logika farieb segmentu (priorita: selection > hover > gradient/default)
-                if i == self.selected_segment_idx:
-                    painter.setPen(QPen(QColor(255, 140, 0), 4)) # Orange Selection
-                elif i == self.hovered_segment_idx:
-                    painter.setPen(QPen(QColor(255, 255, 0), 3)) # Yellow Hover
-                elif is_closing_segment:
-                    gradient = QLinearGradient(p1, p2)
-                    gradient.setColorAt(0, QColor(0, 150, 255))
-                    gradient.setColorAt(0.8, QColor(200, 50, 50))
-                    gradient.setColorAt(1.0, QColor(255, 0, 0))
-                    painter.setPen(QPen(QBrush(gradient), 2))
-                else:
-                    painter.setPen(QPen(QColor(0, 150, 255), 2))
-                
-                painter.drawLine(p1, p2)
+        if len(self.points) == 0:
+            return
 
-            for i, pt in enumerate(self.points):
-                screen_pt = self.to_screen(pt)
-                
-                # Farba bodu
-                if i == self.selected_index:
-                    color = QColor(255, 140, 0) # Orange Selection
-                    size = 5
-                elif i == self.hovered_point_idx:
-                    color = QColor(255, 255, 0) # Yellow Hover
-                    size = 5
-                else:
-                    color = QColor(255, 255, 255) # Default White
-                    size = 4
-                    
-                painter.setBrush(QBrush(color))
-                painter.setPen(QPen(QColor(0, 0, 0), 1) if size > 4 else Qt.NoPen)
-                painter.drawEllipse(screen_pt, size, size)
+        # 4. JEDEN čistý cyklus na vykreslenie čiar (segmentov)
+        for i in range(len(self.points)):
+            p1 = self.to_screen(self.points[i])
+            p2 = self.to_screen(self.points[(i + 1) % len(self.points)])
+            
+            is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 1)
+            
+            if i == self.selected_segment_idx:
+                painter.setPen(QPen(QColor(255, 140, 0), 4))  # Orange Selection
+            elif i == self.hovered_segment_idx:
+                painter.setPen(QPen(QColor(255, 255, 0), 3))  # Yellow Hover
+            elif is_closing_segment:
+                gradient = QLinearGradient(p1, p2)
+                gradient.setColorAt(0.0, QColor(0, 150, 255))
+                gradient.setColorAt(0.8, QColor(200, 50, 50))
+                gradient.setColorAt(1.0, QColor(255, 0, 0))
+                painter.setPen(QPen(QBrush(gradient), 2))
+            else:
+                painter.setPen(QPen(QColor(0, 150, 255), 2))
+            
+            painter.drawLine(p1, p2)
 
-                color = QColor(0, 150, 255)
-                width = 2
-                is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 1)
+        # 5. JEDEN čistý cyklus na vykreslenie bodov (vrcholov) nad čiarami
+        for i, pt in enumerate(self.points):
+            screen_pt = self.to_screen(pt)
+            
+            if i == self.selected_index:
+                color = QColor(255, 140, 0)  # Orange Selection
+                size = 5
+            elif i == self.hovered_point_idx:
+                color = QColor(255, 255, 0)  # Yellow Hover
+                size = 5
+            else:
+                color = QColor(255, 255, 255)  # Default White
+                size = 4
                 
-                # Logika zvýraznenia (hover/selection má prioritu pred gradientom)
-                if i == self.selected_segment_idx:
-                    painter.setPen(QPen(QColor(255, 100, 0), 4))
-                elif i == self.hovered_segment_idx:
-                    painter.setPen(QPen(QColor(0, 255, 255), 3))
-                elif is_closing_segment:
-                    # Špeciálny gradient pre poslednú čiaru (uzatvárací segment)
-                    gradient = QLinearGradient(p1, p2)
-                    gradient.setColorAt(0, QColor(0, 150, 255))   # Štart: Modrá
-                    gradient.setColorAt(0.8, QColor(200, 50, 50)) # Prechod: Červenkastá
-                    gradient.setColorAt(1.0, QColor(255, 0, 0))   # Koniec: Čistá červená
-                    
-                    pen = QPen(QBrush(gradient), 2)
-                    painter.setPen(pen)
-                else:
-                    painter.setPen(QPen(color, width))
-                
-                painter.drawLine(p1, p2)
-
-            for i, pt in enumerate(self.points):
-                screen_pt = self.to_screen(pt)
-                color = QColor(255, 255, 0) if i == self.selected_index else QColor(255, 255, 255)
-                painter.setBrush(QBrush(color))
-                painter.setPen(Qt.NoPen)
-                painter.drawEllipse(screen_pt, 4, 4)
+            painter.setBrush(QBrush(color))
+            painter.setPen(QPen(QColor(0, 0, 0), 1) if size > 4 else Qt.NoPen)
+            painter.drawEllipse(screen_pt, size, size)
 
     def draw_grid(self, painter):
         top_left = self.to_world(QPointF(0, 0))
@@ -188,7 +159,6 @@ class NGonCanvas(QWidget):
         start_y = int(bottom_right.y()) - 1
         end_y = int(top_left.y()) + 1
 
-        # Určenie, či je zoom dostatočný na zobrazenie mriežok
         can_show_grid_1 = self.show_grid_1 and (self.zoom_level > self.CONFIG["GRID_1_THRESHOLD"])
         can_show_grid_5 = self.show_grid_5 and (self.zoom_level > self.CONFIG["GRID_5_THRESHOLD"])
 
@@ -198,7 +168,6 @@ class NGonCanvas(QWidget):
             self.draw_grid_line(painter, y, False, can_show_grid_1, can_show_grid_5)
 
     def draw_grid_line(self, painter, val, is_vertical, can_show_grid_1, can_show_grid_5):
-        # Logika viditeľnosti mriežky
         is_10 = (val % 10 == 0)
         is_5 = (val % 5 == 0)
         
@@ -236,34 +205,26 @@ class NGonCanvas(QWidget):
         painter.drawRect(rect)
 
     def wheelEvent(self, event: QWheelEvent):
-        # Zoom centrovaný na kurzor myši
         mouse_before = self.to_world(event.position())
-        
         zoom_factor = 1.15 if event.angleDelta().y() > 0 else 1/1.15
         new_zoom = self.zoom_level * zoom_factor
-        
-        # Aplikácia limitov z CONFIG
         new_zoom = max(self.CONFIG["MAX_ZOOM_OUT"], min(self.CONFIG["MAX_ZOOM_IN"], new_zoom))
         
-        # Prepíšeme zoom_level a upravíme pan_offset, aby bod pod myšou zostal na mieste
         self.zoom_level = new_zoom
         mouse_after = self.to_world(event.position())
         self.pan_offset += (mouse_after - mouse_before)
-        
         self.update()
 
     def mousePressEvent(self, event: QMouseEvent):
         world_pos = self.to_world(event.position())
         self.last_world_pos = world_pos
         
-        # Panning (Middle button ALEBO Alt + Left Click)
         if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and event.modifiers() & Qt.AltModifier):
             self.is_panning = True
             self.last_mouse_pos = event.position()
             self.setCursor(Qt.ClosedHandCursor)
             return
 
-        # 1. Priorita: Výber existujúceho bodu
         hit_index = -1
         for i, pt in enumerate(self.points):
             dist = (self.to_screen(pt) - event.position()).manhattanLength()
@@ -274,15 +235,13 @@ class NGonCanvas(QWidget):
         if hit_index != -1:
             self.selected_index = hit_index
             self.dragging_point_idx = hit_index
-            self.selected_segment_idx = -1 # Zruš výber segmentu
+            self.selected_segment_idx = -1
             self.selectionChanged.emit(hit_index)
             self.update()
             return
 
-        # 2. Priorita: Interakcia so segmentom (čiarou)
         if self.hovered_segment_idx != -1:
             if event.modifiers() & Qt.ControlModifier:
-                # Vloženie bodu do segmentu
                 new_pt = self.apply_snap(world_pos)
                 self.points.insert(self.hovered_segment_idx + 1, new_pt)
                 self.selected_index = self.hovered_segment_idx + 1
@@ -290,7 +249,6 @@ class NGonCanvas(QWidget):
                 self.pointsChanged.emit(self.points)
                 self.selectionChanged.emit(self.selected_index)
             else:
-                # Označenie segmentu pre posun
                 self.selected_segment_idx = self.hovered_segment_idx
                 self.dragging_segment_idx = self.hovered_segment_idx
                 self.selected_index = -1
@@ -298,7 +256,6 @@ class NGonCanvas(QWidget):
             self.update()
             return
 
-        # 3. Priorita: Nový bod na koniec (len s Ctrl)
         if event.modifiers() & Qt.ControlModifier:
             new_pt = self.apply_snap(world_pos)
             self.points.append(new_pt)
@@ -335,11 +292,9 @@ class NGonCanvas(QWidget):
             idx1 = self.dragging_segment_idx
             idx2 = (idx1 + 1) % len(self.points)
             
-            # Posunieme oba body segmentu
             self.points[idx1] += delta
             self.points[idx2] += delta
             
-            # Ak je snap zapnutý, aplikujeme ho po posune
             self.points[idx1] = self.apply_snap(self.points[idx1])
             self.points[idx2] = self.apply_snap(self.points[idx2])
             
@@ -354,14 +309,12 @@ class NGonCanvas(QWidget):
         self.hovered_point_idx = -1
         self.hovered_segment_idx = -1
         
-        # 1. Kontrola hoveru nad bodmi (má prioritu)
         for i, pt in enumerate(self.points):
             dist = (self.to_screen(pt) - event.position()).manhattanLength()
             if dist < 12:
                 self.hovered_point_idx = i
                 break
         
-        # 2. Kontrola hoveru nad segmentmi (len ak nie sme nad bodom)
         if self.hovered_point_idx == -1 and len(self.points) >= 2:
             mouse_px = event.position()
             for i in range(len(self.points)):
@@ -399,7 +352,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(main_widget)
         layout = QHBoxLayout(main_widget)
 
-        # Central Area (Tabs)
         self.tabs = QTabWidget()
         self.canvas = NGonCanvas()
         self.tabs.addTab(self.canvas, "Design Canvas")
@@ -410,12 +362,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.json_view, "JavaScript Output")
         layout.addWidget(self.tabs, stretch=4)
 
-        # Control Panel
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         layout.addWidget(right_panel, stretch=1)
 
-        # 1. Visibility Controls
         vis_group = QGroupBox("View Options")
         vis_layout = QVBoxLayout(vis_group)
         self.chk_grid_1 = QCheckBox("Show Grid 1x"); self.chk_grid_1.setChecked(True)
@@ -425,7 +375,6 @@ class MainWindow(QMainWindow):
         for w in [self.chk_grid_1, self.chk_grid_5, self.chk_grid_10, self.chk_axes]: vis_layout.addWidget(w)
         right_layout.addWidget(vis_group)
 
-        # 2. Snapping Controls
         snap_group = QGroupBox("Snapping")
         snap_layout = QGridLayout(snap_group)
         self.check_snap_x = QCheckBox("Snap X")
@@ -436,7 +385,6 @@ class MainWindow(QMainWindow):
         snap_layout.addWidget(self.check_snap_both, 1, 0, 1, 2)
         right_layout.addWidget(snap_group)
 
-        # 3. Safe Region Controls
         safe_group = QGroupBox("Safe Region")
         safe_layout = QGridLayout(safe_group)
         self.chk_safe_enable = QCheckBox("Enable Safe Region")
@@ -452,7 +400,6 @@ class MainWindow(QMainWindow):
         safe_layout.addWidget(QLabel("D:"), 4, 0); safe_layout.addWidget(self.spn_d, 4, 1)
         right_layout.addWidget(safe_group)
 
-        # 4. Outliner
         right_layout.addWidget(QLabel("Points Outliner:"))
         self.outliner = QListWidget()
         right_layout.addWidget(self.outliner)
@@ -465,18 +412,15 @@ class MainWindow(QMainWindow):
         self.canvas.selectionChanged.connect(self.sync_selection_to_ui)
         self.outliner.currentRowChanged.connect(self.sync_selection_to_canvas)
         
-        # Grid/Vis connects
         self.chk_grid_1.stateChanged.connect(self.update_canvas_settings)
         self.chk_grid_5.stateChanged.connect(self.update_canvas_settings)
         self.chk_grid_10.stateChanged.connect(self.update_canvas_settings)
         self.chk_axes.stateChanged.connect(self.update_canvas_settings)
         
-        # Snap connects
         self.check_snap_x.stateChanged.connect(self.update_canvas_settings)
         self.check_snap_y.stateChanged.connect(self.update_canvas_settings)
         self.check_snap_both.stateChanged.connect(self.toggle_both_snap)
 
-        # Safe region connects
         self.chk_safe_enable.stateChanged.connect(self.update_canvas_settings)
         for s in [self.spn_l, self.spn_r, self.spn_u, self.spn_d]:
             s.valueChanged.connect(self.update_canvas_settings)
@@ -498,7 +442,8 @@ class MainWindow(QMainWindow):
         self.canvas.update()
 
     def toggle_both_snap(self, state):
-        is_checked = (state == Qt.Checked.value)
+        # Opravená kompatibilita pre PySide6 check state enum
+        is_checked = (state == Qt.CheckState.Checked.value or state == 2)
         self.check_snap_x.setChecked(is_checked)
         self.check_snap_y.setChecked(is_checked)
         self.update_canvas_settings()
