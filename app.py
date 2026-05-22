@@ -472,6 +472,51 @@ class NGonCanvas(QWidget):
             self.selectionChanged.emit(self.selected_index)
             self.update()
 
+    def center_view(self):
+        """Vypočíta ohraničujúci obdĺžnik bodov a upraví zoom a posun tak, aby bol n-uholník v strede."""
+        if not self.points:
+            # Ak nie sú body, vrátime sa na predvolené hodnoty
+            self.pan_offset = QPointF(0, 0)
+            self.zoom_level = 1.0
+            self.update()
+            return
+
+        # Zistenie min/max súradníc (Bounding Box)
+        min_x = min(p.x() for p in self.points)
+        max_x = max(p.x() for p in self.points)
+        min_y = min(p.y() for p in self.points)
+        max_y = max(p.y() for p in self.points)
+
+        rect_w = max_x - min_x
+        rect_h = max_y - min_y
+        center_world = QPointF((min_x + max_x) / 2, (min_y + max_y) / 2)
+
+        # Výpočet nového zoomu tak, aby sa n-uholník zmestil na 80% plochy (padding)
+        margin = 0.8
+        
+        # Šírka vo svete, ktorú chceme zobraziť: rect_w / margin
+        # Z rovnice scale: (width / 500) * zoom
+        # Chceme: rect_w * scale = width * margin
+        # Po dosadení scale: rect_w * (width / 500) * zoom = width * margin
+        # zoom = (500 * margin) / rect_w
+        
+        zoom_x = (self.target_width_units * margin) / rect_w if rect_w > 0 else float('inf')
+        
+        # Pre výšku musíme brať do úvahy pomer strán okna
+        visible_height_units = self.target_width_units * (self.height() / self.width() if self.width() > 0 else 1)
+        zoom_y = (visible_height_units * margin) / rect_h if rect_h > 0 else float('inf')
+
+        # Použijeme menší z oboch zoomov (aby sa to zmestilo v oboch smeroch)
+        new_zoom = min(zoom_x, zoom_y)
+        
+        # Ak máme len 1 bod alebo veľmi malý objekt, nedávame nekonečný zoom
+        if new_zoom > 10: new_zoom = 1.0
+
+        # Aplikácia zmien
+        self.zoom_level = max(self.CONFIG["MAX_ZOOM_OUT"], min(self.CONFIG["MAX_ZOOM_IN"], new_zoom))
+        self.pan_offset = -center_world
+        self.update()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -544,6 +589,20 @@ class MainWindow(QMainWindow):
         safe_layout.addWidget(QLabel("Dolná (D):"), 4, 0); safe_layout.addWidget(self.spn_d, 4, 1)
         right_layout.addWidget(safe_group)
 
+        self.btn_center = QPushButton("Vycentrovať pohľad")
+        self.btn_center.setFixedHeight(40)
+        self.btn_center.setStyleSheet("""
+            QPushButton { 
+                background-color: #455a64; 
+                color: white; 
+                font-weight: bold; 
+                border-radius: 4px;
+                margin-bottom: 5px;
+            }
+            QPushButton:hover { background-color: #546e7a; }
+        """)
+        right_layout.addWidget(self.btn_center)
+
         self.btn_preview = QPushButton("Spustiť Náhľad")
         self.btn_preview.setFixedHeight(40)
         self.btn_preview.setStyleSheet("""
@@ -578,6 +637,7 @@ class MainWindow(QMainWindow):
             lambda item: self.open_coordinate_editor(self.outliner.row(item))
         )
         
+        self.btn_center.clicked.connect(self.canvas.center_view)
         self.btn_preview.clicked.connect(self.enable_preview)
         
         # Prepojenie zobrazenia
