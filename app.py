@@ -116,7 +116,7 @@ class NGonCanvas(QWidget):
             p1 = self.to_screen(self.points[i])
             p2 = self.to_screen(self.points[(i + 1) % len(self.points)])
             
-            is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 1)
+            is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 2)
             
             if i == self.selected_segment_idx:
                 painter.setPen(QPen(QColor(255, 140, 0), 4))  # Oranžový výber
@@ -350,9 +350,9 @@ class NGonCanvas(QWidget):
     def delete_selected_point(self):
         if self.selected_index != -1 and 0 <= self.selected_index < len(self.points):
             self.points.pop(self.selected_index)
-            self.selected_index = -1
+            self.selected_index = max(0, self.selected_index - 1) if self.points else -1
             self.pointsChanged.emit(self.points)
-            self.selectionChanged.emit(-1)
+            self.selectionChanged.emit(self.selected_index)
             self.update()
 
 class MainWindow(QMainWindow):
