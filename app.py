@@ -11,33 +11,38 @@ from PySide6.QtGui import QLinearGradient, QPainter, QColor, QPen, QBrush, QKeyE
 class CoordinateDialog(QDialog):
     def __init__(self, x, y, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Upraviť súradnice")
+        self.setWindowTitle("Upraviť súradnice bodu")
+        self.setMinimumWidth(250)
         layout = QFormLayout(self)
 
-        # Polia pre zadávanie čísiel
+        # Polia pre zadávanie číselných hodnôt
         self.spn_x = QDoubleSpinBox()
         self.spn_x.setRange(-10000, 10000)
         self.spn_x.setValue(x)
+        self.spn_x.setDecimals(2)
         
         self.spn_y = QDoubleSpinBox()
         self.spn_y.setRange(-10000, 10000)
         self.spn_y.setValue(y)
+        self.spn_y.setDecimals(2)
 
         layout.addRow("Súradnica X:", self.spn_x)
         layout.addRow("Súradnica Y:", self.spn_y)
 
-        # Tlačidlá OK a Cancel
+        # Štandardné tlačidlá OK a Zrušiť
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addRow(self.buttons)
 
     def get_values(self):
+        """Vráti nastavené hodnoty X a Y."""
         return self.spn_x.value(), self.spn_y.value()
 
 class NGonCanvas(QWidget):
     pointsChanged = Signal(list)
     selectionChanged = Signal(int)
+    pointDoubleClicked = Signal(int)
 
     def __init__(self):
         super().__init__()
@@ -103,7 +108,7 @@ class NGonCanvas(QWidget):
         world_x = (screen_pt.x() - center.x()) / scale - self.pan_offset.x()
         world_y = (center.y() - screen_pt.y()) / scale - self.pan_offset.y()
         return QPointF(world_x, world_y)
-    
+
     def apply_snap(self, pt):
         """Aplikuje prichytávanie bodu podľa aktuálne viditeľnej mriežky."""
         # Zistíme, či je zobrazená len 10-ková mriežka (rovnaká podmienka ako v draw_grid)
@@ -395,38 +400,23 @@ class NGonCanvas(QWidget):
         if old_h_point != self.hovered_point_idx or old_h_segment != self.hovered_segment_idx:
             self.update()
 
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        # 1. Zistíme, či sme klikli na nejaký bod
-        hit_index = -1
-        for i, pt in enumerate(self.points):
-            # Prepočet bodu na obrazovku a kontrola vzdialenosti kurzora
-            dist = (self.to_screen(pt) - event.position()).manhattanLength()
-            if dist < 12:
-                hit_index = i
-                break
-
-        # 2. Ak sme klikli na bod a je to ten, ktorý je práve vybratý
-        if hit_index != -1 and hit_index == self.selected_index:
-            pt = self.points[hit_index]
-            
-            # Otvorenie dialógu s aktuálnymi súradnicami
-            dialog = CoordinateDialog(pt.x(), pt.y(), self)
-            
-            if dialog.exec() == QDialog.Accepted:
-                new_x, new_y = dialog.get_values()
-                
-                # Aktualizácia bodu (tu môžeme obísť snap, keďže zadávame presné čísla)
-                self.points[hit_index] = QPointF(new_x, new_y)
-                
-                # Informovanie systému o zmene a prekreslenie
-                self.pointsChanged.emit(self.points)
-                self.update()
-
     def mouseReleaseEvent(self, event: QMouseEvent):
         self.is_panning = False
         self.dragging_point_idx = -1
         self.dragging_segment_idx = -1
         self.setCursor(Qt.ArrowCursor)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        """Zistí, či bol zasiahnutý bod, a ak áno, vyvolá signál pre editáciu."""
+        hit_index = -1
+        for i, pt in enumerate(self.points):
+            dist = (self.to_screen(pt) - event.position()).manhattanLength()
+            if dist < 12:
+                hit_index = i
+                break
+        
+        if hit_index != -1:
+            self.pointDoubleClicked.emit(hit_index)
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Delete and self.selected_index != -1:
@@ -528,6 +518,11 @@ class MainWindow(QMainWindow):
         self.canvas.selectionChanged.connect(self.sync_selection_to_ui)
         self.outliner.currentRowChanged.connect(self.sync_selection_to_canvas)
         
+        self.canvas.pointDoubleClicked.connect(self.open_coordinate_editor)
+        self.outliner.itemDoubleClicked.connect(
+            lambda item: self.open_coordinate_editor(self.outliner.row(item))
+        )
+        
         # Prepojenie zobrazenia
         self.chk_grid_master.stateChanged.connect(self.update_canvas_settings)
         self.chk_axes.stateChanged.connect(self.update_canvas_settings)
@@ -574,6 +569,25 @@ class MainWindow(QMainWindow):
         self.check_snap_x.setChecked(is_checked)
         self.check_snap_y.setChecked(is_checked)
         self.update_canvas_settings()
+
+    def open_coordinate_editor(self, index):
+        """Otvorí okno pre manuálnu úpravu súradníc vybraného bodu."""
+        if 0 <= index < len(self.canvas.points):
+            # Synchronizácia výberu
+            self.canvas.selected_index = index
+            self.sync_selection_to_ui(index)
+            self.canvas.update()
+
+            pt = self.canvas.points[index]
+            dialog = CoordinateDialog(pt.x(), pt.y(), self)
+            
+            if dialog.exec() == QDialog.Accepted:
+                new_x, new_y = dialog.get_values()
+                self.canvas.points[index] = QPointF(new_x, new_y)
+                
+                # Emitovanie signálu spustí update_ui a prekreslenie
+                self.canvas.pointsChanged.emit(self.canvas.points)
+                self.canvas.update()
 
     def update_ui(self, points):
         self.outliner.blockSignals(True)
