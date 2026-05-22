@@ -38,6 +38,7 @@ class NGonCanvas(QWidget):
         self.snap_y = False
         self.show_grid = True  # Jeden hlavný vypínač pre mriežku
         self.show_axes = True
+        self.show_coords = False
         
         # Nastavenie bezpečnej zóny (Safe Region)
         self.safe_enabled = False
@@ -151,6 +152,28 @@ class NGonCanvas(QWidget):
             painter.setBrush(QBrush(color))
             painter.setPen(QPen(QColor(0, 0, 0), 1) if size > 4 else Qt.NoPen)
             painter.drawEllipse(screen_pt, size, size)
+        
+        if self.show_coords:
+            painter.setFont(self.font()) # Nastavenie písma
+            for pt in self.points:
+                screen_pt = self.to_screen(pt)
+                # Formátovanie textu (súradnice vo svete)
+                text = f"{pt.x():.1f}, {pt.y():.1f}"
+                
+                # Výpočet veľkosti obdĺžnika podľa textu
+                metrics = painter.fontMetrics()
+                rect = metrics.boundingRect(text)
+                rect.adjust(-2, -2, 2, 2) # Malý padding
+                rect.translate(screen_pt.x() + 10, screen_pt.y() - 10) # Posun vedľa bodu
+
+                # Kreslenie pozadia (biely obdĺžnik)
+                painter.setPen(QPen(QColor(0, 0, 0), 1))
+                painter.setBrush(QBrush(QColor(255, 255, 255, 220))) # Mierne priehľadná biela
+                painter.drawRoundedRect(rect, 3, 3)
+
+                # Kreslenie textu
+                painter.setPen(QColor(0, 0, 0))
+                painter.drawText(rect, Qt.AlignCenter, text)
 
     def draw_grid(self, painter):
         top_left = self.to_world(QPointF(0, 0))
@@ -386,14 +409,17 @@ class MainWindow(QMainWindow):
         vis_group = QGroupBox("Možnosti zobrazenia")
         vis_layout = QVBoxLayout(vis_group)
         
+        self.chk_axes = QCheckBox("Zobraziť hlavné osi")
+        self.chk_axes.setChecked(True)
+        vis_layout.addWidget(self.chk_axes)
+        
         # Jediný globálny prepínač pre mriežku
         self.chk_grid_master = QCheckBox("Zobraziť mriežku")
         self.chk_grid_master.setChecked(True)
         vis_layout.addWidget(self.chk_grid_master)
-        
-        self.chk_axes = QCheckBox("Zobraziť hlavné osi")
-        self.chk_axes.setChecked(True)
-        vis_layout.addWidget(self.chk_axes)
+
+        self.chk_coords = QCheckBox("Zobraziť súradnice")
+        vis_layout.addWidget(self.chk_coords)
             
         right_layout.addWidget(vis_group)
 
@@ -443,6 +469,7 @@ class MainWindow(QMainWindow):
         # Prepojenie zobrazenia
         self.chk_grid_master.stateChanged.connect(self.update_canvas_settings)
         self.chk_axes.stateChanged.connect(self.update_canvas_settings)
+        self.chk_coords.stateChanged.connect(self.update_canvas_settings)
         
         # Prepojenie prichytávania
         self.check_snap_x.stateChanged.connect(self.update_canvas_settings)
@@ -469,6 +496,8 @@ class MainWindow(QMainWindow):
         
         self.canvas.snap_x = self.check_snap_x.isChecked()
         self.canvas.snap_y = self.check_snap_y.isChecked()
+
+        self.canvas.show_coords = self.chk_coords.isChecked()
         
         self.canvas.safe_enabled = self.chk_safe_enable.isChecked()
         self.canvas.safe_l = self.spn_l.value()
