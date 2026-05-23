@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton  # Pridané tlačidlo pre Náhľad
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
-from PySide6.QtGui import QLinearGradient, QPainter, QColor, QPen, QBrush, QKeyEvent, QMouseEvent, QWheelEvent, QPolygonF
+from PySide6.QtGui import QIcon, QLinearGradient, QPainter, QColor, QPen, QBrush, QKeyEvent, QMouseEvent, QWheelEvent, QPolygonF
 
 from file_manager import save_ngon_to_js, import_ngon_from_js
 
@@ -524,6 +524,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("NGon Editor Pro - Pokročilý editor")
         self.resize(1200, 800)
+
+        # Nastavenie vlastnej ikony okna
+        self.setWindowIcon(QIcon("icon.png"))
+
         self.setStyleSheet("QMainWindow { background-color: #252525; } QGroupBox { color: #aaa; font-weight: bold; }")
 
         main_widget = QWidget()
