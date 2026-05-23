@@ -522,7 +522,7 @@ class NGonCanvas(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("NGon Editor Pro - Pokročilý editor")
+        self.setWindowTitle("NGon Editor")
         self.resize(1200, 800)
 
         # Nastavenie vlastnej ikony okna
