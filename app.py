@@ -583,16 +583,16 @@ class MainWindow(QMainWindow):
 
         # Vytvorenie GroupBoxu pre súborové operácie
         file_group = QGroupBox("Súbor")
-        file_layout = QVBoxLayout(file_group)
+        file_layout = QHBoxLayout(file_group)
 
-        self.btn_import = QPushButton("Importovať JS...")
+        self.btn_import = QPushButton("Import")
         self.btn_import.setFixedHeight(35)
         self.btn_import.setStyleSheet("""
             QPushButton { background-color: #37474f; color: white; font-weight: bold; border-radius: 4px; }
             QPushButton:hover { background-color: #455a64; }
         """)
 
-        self.btn_save = QPushButton("Uložiť JS...")
+        self.btn_save = QPushButton("Uložiť")
         self.btn_save.setFixedHeight(35)
         self.btn_save.setStyleSheet("""
             QPushButton { background-color: #00838f; color: white; font-weight: bold; border-radius: 4px; }
@@ -640,6 +640,17 @@ class MainWindow(QMainWindow):
         snap_layout.addWidget(self.check_snap_both, 1, 0, 1, 2)
         snap_layout.addWidget(self.btn_snap_all_int, 2, 0, 1, 2)
         right_layout.addWidget(snap_group)
+
+        # NOVÉ: Tlačidlo pre vyhladenie (Smooth)
+        self.btn_smooth_all = QPushButton("Vyhladiť tvar (Smooth)")
+        self.btn_smooth_all.setStyleSheet("""
+            QPushButton { 
+                background-color: #7b1fa2; color: white; font-weight: bold; border-radius: 4px; padding: 4px; 
+            }
+            QPushButton:hover { background-color: #8e24aa; }
+        """)
+        # Pridáme ho do layoutu prichytávania (alebo hocikam inam pod ním)
+        snap_layout.addWidget(self.btn_smooth_all, 3, 0, 1, 2)
 
         # 3. Nastavenie bezpečnej zóny
         safe_group = QGroupBox("Bezpečná zóna")
@@ -722,6 +733,8 @@ class MainWindow(QMainWindow):
         self.check_snap_both.stateChanged.connect(self.toggle_both_snap)
         self.btn_snap_all_int.clicked.connect(self.snap_all_points_to_integer) # NOVÉ PREPOJENIE
 
+        self.btn_smooth_all.clicked.connect(self.smooth_all_points)
+
         # Prepojenie bezpečnej zóny
         self.chk_safe_enable.stateChanged.connect(self.update_canvas_settings)
         for s in [self.spn_l, self.spn_r, self.spn_u, self.spn_d]:
@@ -760,6 +773,39 @@ class MainWindow(QMainWindow):
             self.canvas.points[i] = QPointF(round(pt.x()), round(pt.y()))
             
         # Oznámime aplikácii zmenu, aby sa prekreslilo plátno a aktualizoval Outliner/JSON
+        self.canvas.pointsChanged.emit(self.canvas.points)
+        self.canvas.update()
+
+    def smooth_all_points(self):
+        """Vyhladí tvar pomocou Chaikinovho algoritmu (Corner Cutting)."""
+        points = self.canvas.points
+        # Vyhladzovanie má zmysel len ak máme uzavretý tvar (aspoň 3 body)
+        if len(points) < 3:
+            return
+            
+        smoothed_points = []
+        n = len(points)
+        
+        for i in range(n):
+            pt_current = points[i]
+            pt_next = points[(i + 1) % n]
+            
+            # Chaikinov algoritmus berie body v 1/4 a 3/4 úsečky
+            # QPointF podporuje základnú lineárnu algebru
+            q1 = pt_current * 0.75 + pt_next * 0.25
+            q2 = pt_current * 0.25 + pt_next * 0.75
+            
+            smoothed_points.append(q1)
+            smoothed_points.append(q2)
+            
+        # Prepíšeme body na plátne novými vyhladenými bodmi
+        self.canvas.points = smoothed_points
+        
+        # Zrušíme aktuálny výber, keďže staré indexy bodov už neexistujú
+        self.canvas.selected_index = -1
+        self.canvas.selected_segment_idx = -1
+        
+        # Oznámime aplikácii zmenu (prekreslí sa Outliner a JSON)
         self.canvas.pointsChanged.emit(self.canvas.points)
         self.canvas.update()
 
@@ -817,15 +863,18 @@ class MainWindow(QMainWindow):
         self.outliner.blockSignals(True)
         self.outliner.clear()
         json_data = []
+        items = []
         for i, pt in enumerate(points):
             self.outliner.addItem(f"Bod {i}: [{pt.x():.1f}, {pt.y():.1f}]")
             json_data.append({"x": round(pt.x(), 2), "y": round(pt.y(), 2)})
+            items.append(f"{{x: {pt.x():.2f}, y: {pt.y():.2f}}}")
         
         if self.canvas.selected_index != -1:
             self.outliner.setCurrentRow(self.canvas.selected_index)
         self.outliner.blockSignals(False)
 
         js_code = "const ngon = " + json.dumps(json_data, indent=4) + ";"
+        js_code = "const ngon = [\n    " + ",\n    ".join(items) + "\n];"
         self.json_view.setPlainText(js_code)
 
     def sync_selection_to_ui(self, index):
