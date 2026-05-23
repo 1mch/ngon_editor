@@ -463,6 +463,37 @@ class NGonCanvas(QWidget):
             self.pointDoubleClicked.emit(hit_index)
 
     def keyPressEvent(self, event: QKeyEvent):
+        # 1. Kontrola pre Shift + šípky (posun celého n-uholníka o 10 jednotiek)
+        if event.modifiers() & Qt.ShiftModifier:
+            moved = False
+            delta = QPointF(0, 0)
+
+            if event.key() == Qt.Key_Left:
+                delta = QPointF(-1.0, 0.0)
+                moved = True
+            elif event.key() == Qt.Key_Right:
+                delta = QPointF(1.0, 0.0)
+                moved = True
+            elif event.key() == Qt.Key_Up:
+                # POZNÁMKA: Ak máte herné/matematické súradnice, kde UP znamená mínus v Y, 
+                # upravte znamienko podľa potreby vášho plátna (napr. -10.0)
+                delta = QPointF(0.0, -1.0)
+                moved = True
+            elif event.key() == Qt.Key_Down:
+                delta = QPointF(0.0, 1.0)
+                moved = True
+
+            if moved and self.points:
+                # Posunúť každý bod n-uholníka o stanovený delta posun
+                for i in range(len(self.points)):
+                    self.points[i] += delta
+                
+                # Oznámiť zmenu aplikácii (aktualizuje Outliner a JSON výstup)
+                self.pointsChanged.emit(self.points)
+                self.update()
+                return  # Ukončíme spracovanie eventu
+
+        # 2. Pôvodná logika pre zmazanie bodu
         if event.key() == Qt.Key_Delete and self.selected_index != -1:
             self.delete_selected_point()
 
@@ -596,9 +627,18 @@ class MainWindow(QMainWindow):
         self.check_snap_x = QCheckBox("Prichytiť na X")
         self.check_snap_y = QCheckBox("Prichytiť na Y")
         self.check_snap_both = QCheckBox("Prichytiť na obe osi")
+        # NOVÉ: Tlačidlo pre hromadné prichytenie na celé čísla
+        self.btn_snap_all_int = QPushButton("Prichytiť všetko na celé čísla")
+        self.btn_snap_all_int.setStyleSheet("""
+            QPushButton { 
+                background-color: #006064; color: white; font-weight: bold; border-radius: 4px; padding: 4px; 
+            }
+            QPushButton:hover { background-color: #00838f; }
+        """)
         snap_layout.addWidget(self.check_snap_x, 0, 0)
         snap_layout.addWidget(self.check_snap_y, 0, 1)
         snap_layout.addWidget(self.check_snap_both, 1, 0, 1, 2)
+        snap_layout.addWidget(self.btn_snap_all_int, 2, 0, 1, 2)
         right_layout.addWidget(snap_group)
 
         # 3. Nastavenie bezpečnej zóny
@@ -667,7 +707,7 @@ class MainWindow(QMainWindow):
 
         self.btn_save.clicked.connect(self.action_save_js)
         self.btn_import.clicked.connect(self.action_import_js)
-        
+
         self.btn_center.clicked.connect(self.canvas.center_view)
         self.btn_preview.clicked.connect(self.enable_preview)
         
@@ -680,6 +720,7 @@ class MainWindow(QMainWindow):
         self.check_snap_x.stateChanged.connect(self.update_canvas_settings)
         self.check_snap_y.stateChanged.connect(self.update_canvas_settings)
         self.check_snap_both.stateChanged.connect(self.toggle_both_snap)
+        self.btn_snap_all_int.clicked.connect(self.snap_all_points_to_integer) # NOVÉ PREPOJENIE
 
         # Prepojenie bezpečnej zóny
         self.chk_safe_enable.stateChanged.connect(self.update_canvas_settings)
@@ -708,6 +749,19 @@ class MainWindow(QMainWindow):
             self.canvas.pointsChanged.emit(self.canvas.points)
             self.canvas.center_view() # Vycentruje novo importovaný tvar
             self.canvas.update()
+
+    def snap_all_points_to_integer(self):
+        """Zaokrúhli súradnice všetkých bodov na najbližšie celé číslo."""
+        if not self.canvas.points:
+            return
+            
+        for i in range(len(self.canvas.points)):
+            pt = self.canvas.points[i]
+            self.canvas.points[i] = QPointF(round(pt.x()), round(pt.y()))
+            
+        # Oznámime aplikácii zmenu, aby sa prekreslilo plátno a aktualizoval Outliner/JSON
+        self.canvas.pointsChanged.emit(self.canvas.points)
+        self.canvas.update()
 
     def update_canvas_settings(self):
         # Načítanie stavu hlavného prepínača mriežky
