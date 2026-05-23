@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import QLinearGradient, QPainter, QColor, QPen, QBrush, QKeyEvent, QMouseEvent, QWheelEvent, QPolygonF
 
+from file_manager import save_ngon_to_js, import_ngon_from_js
+
 class CoordinateDialog(QDialog):
     def __init__(self, x, y, parent=None):
         super().__init__(parent)
@@ -544,6 +546,28 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         layout.addWidget(right_panel, stretch=1)
 
+        # Vytvorenie GroupBoxu pre súborové operácie
+        file_group = QGroupBox("Súbor")
+        file_layout = QVBoxLayout(file_group)
+
+        self.btn_import = QPushButton("Importovať JS...")
+        self.btn_import.setFixedHeight(35)
+        self.btn_import.setStyleSheet("""
+            QPushButton { background-color: #37474f; color: white; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #455a64; }
+        """)
+
+        self.btn_save = QPushButton("Uložiť JS...")
+        self.btn_save.setFixedHeight(35)
+        self.btn_save.setStyleSheet("""
+            QPushButton { background-color: #00838f; color: white; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #0097a7; }
+        """)
+
+        file_layout.addWidget(self.btn_import)
+        file_layout.addWidget(self.btn_save)
+        right_layout.addWidget(file_group) # Pridanie do pravého panelu
+
         # 1. Možnosti zobrazenia (Mriežka a osi)
         vis_group = QGroupBox("Možnosti zobrazenia")
         vis_layout = QVBoxLayout(vis_group)
@@ -636,6 +660,9 @@ class MainWindow(QMainWindow):
         self.outliner.itemDoubleClicked.connect(
             lambda item: self.open_coordinate_editor(self.outliner.row(item))
         )
+
+        self.btn_save.clicked.connect(self.action_save_js)
+        self.btn_import.clicked.connect(self.action_import_js)
         
         self.btn_center.clicked.connect(self.canvas.center_view)
         self.btn_preview.clicked.connect(self.enable_preview)
@@ -662,6 +689,21 @@ class MainWindow(QMainWindow):
                 self.canvas.delete_selected_point()
                 return True
         return super().eventFilter(watched, event)
+    
+    def action_save_js(self):
+        # Zavolá pomocnú funkciu a odovzdá aktuálne body z plátna
+        save_ngon_to_js(self, self.canvas.points)
+
+    def action_import_js(self):
+        # Zavolá pomocnú funkciu a ak sa načítanie podarí, aktualizuje plátno a UI
+        imported_points = import_ngon_from_js(self)
+        if imported_points is not None:
+            self.canvas.points = imported_points
+            self.canvas.selected_index = -1
+            self.canvas.selected_segment_idx = -1
+            self.canvas.pointsChanged.emit(self.canvas.points)
+            self.canvas.center_view() # Vycentruje novo importovaný tvar
+            self.canvas.update()
 
     def update_canvas_settings(self):
         # Načítanie stavu hlavného prepínača mriežky
