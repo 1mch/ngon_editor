@@ -873,7 +873,7 @@ class MainWindow(QMainWindow):
             self.outliner.setCurrentRow(self.canvas.selected_index)
         self.outliner.blockSignals(False)
 
-        js_code = "const ngon = " + json.dumps(json_data, indent=4) + ";"
+        json_code = "const ngon = " + json.dumps(json_data, indent=4) + ";"
         js_code = "const ngon = [\n    " + ",\n    ".join(items) + "\n];"
         self.json_view.setPlainText(js_code)
 
