@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QTabWidget, QListWidget, QCheckBox, QLabel, QGroupBox, 
     QTextEdit, QDoubleSpinBox, QGridLayout, QDialog, QFormLayout, QDialogButtonBox,
-    QPushButton  # Pridané tlačidlo pre Náhľad
+    QComboBox, QPushButton
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import QIcon, QLinearGradient, QPainter, QColor, QPen, QBrush, QKeyEvent, QMouseEvent, QWheelEvent, QPolygonF
@@ -60,7 +60,8 @@ class NGonCanvas(QWidget):
         }
 
         # Body n-uholníka
-        self.points = []
+        self.ngons = [[]]  # Začíname s jedným prázdnym n-uholníkom
+        self.active_ngon_idx = 0  # Index n-uholníka, s ktorým práve pracujeme
         self.selected_index = -1
         
         # Transformácia a posun zobrazenia
@@ -95,6 +96,19 @@ class NGonCanvas(QWidget):
         self.hovered_point_idx = -1
         
         self.preview_mode = False
+
+    @property
+    def points(self):
+        """Vráti body aktuálne aktívneho n-uholníka."""
+        if 0 <= self.active_ngon_idx < len(self.ngons):
+            return self.ngons[self.active_ngon_idx]
+        return []
+
+    @points.setter
+    def points(self, value):
+        """Umožní zápis do bodov aktuálne aktívneho n-uholníka."""
+        if 0 <= self.active_ngon_idx < len(self.ngons):
+            self.ngons[self.active_ngon_idx] = value
 
     def get_scale(self):
         """Vypočíta mierku na základe aktuálnej šírky okna a zoomu."""
@@ -169,46 +183,59 @@ class NGonCanvas(QWidget):
         if len(self.points) == 0:
             return
 
-        # 4. Vykreslenie čiar (segmentov)
-        for i in range(len(self.points)):
-            p1 = self.to_screen(self.points[i])
-            p2 = self.to_screen(self.points[(i + 1) % len(self.points)])
-            
-            is_closing_segment = (i == len(self.points) - 1 and len(self.points) > 2)
-            
-            if i == self.selected_segment_idx:
-                painter.setPen(QPen(QColor(255, 140, 0), 4))  # Oranžový výber
-            elif i == self.hovered_segment_idx:
-                painter.setPen(QPen(QColor(255, 255, 0), 3))  # Žltý hover
-            elif is_closing_segment:
-                # Farebný prechod pre uzatváraciu čiaru
-                gradient = QLinearGradient(p1, p2)
-                gradient.setColorAt(0.0, QColor(0, 150, 255))
-                gradient.setColorAt(0.8, QColor(200, 50, 50))
-                gradient.setColorAt(1.0, QColor(255, 0, 0))
-                painter.setPen(QPen(QBrush(gradient), 2))
-            else:
-                painter.setPen(QPen(QColor(0, 150, 255), 2))  # Bežná modrá čiara
-            
-            painter.drawLine(p1, p2)
-
-        # 5. Vykreslenie bodov (vrcholov) nad čiarami
-        for i, pt in enumerate(self.points):
-            screen_pt = self.to_screen(pt)
-            
-            if i == self.selected_index:
-                color = QColor(255, 140, 0)  # Oranžový vybratý bod
-                size = 5
-            elif i == self.hovered_point_idx:
-                color = QColor(255, 255, 0)  # Žltý zameraný bod
-                size = 5
-            else:
-                color = QColor(255, 255, 255)  # Biely predvolený bod
-                size = 4
+        # 4. Vykreslenie všetkých n-uholníkov
+        for ngon_idx, points in enumerate(self.ngons):
+            if len(points) == 0:
+                continue
                 
-            painter.setBrush(QBrush(color))
-            painter.setPen(QPen(QColor(0, 0, 0), 1) if size > 4 else Qt.NoPen)
-            painter.drawEllipse(screen_pt, size, size)
+            is_active_ngon = (ngon_idx == self.active_ngon_idx)
+
+            for i in range(len(points)):
+                p1 = self.to_screen(points[i])
+                p2 = self.to_screen(points[(i + 1) % len(points)])
+                
+                is_closing_segment = (i == len(points) - 1 and len(points) > 2)
+                
+                if is_active_ngon and i == self.selected_segment_idx:
+                    painter.setPen(QPen(QColor(255, 140, 0), 4))  # Oranžový výber hrany aktívneho tvaru
+                elif is_active_ngon and i == self.hovered_segment_idx:
+                    painter.setPen(QPen(QColor(255, 255, 0), 3))  # Žltý hover
+                elif not is_active_ngon:
+                    painter.setPen(QPen(QColor(100, 100, 100, 150), 1, Qt.DashLine)) # Neaktívne tvary budú matné a prerušované
+                elif is_closing_segment:
+                    gradient = QLinearGradient(p1, p2)
+                    gradient.setColorAt(0.0, QColor(0, 150, 255))
+                    gradient.setColorAt(0.8, QColor(200, 50, 50))
+                    gradient.setColorAt(1.0, QColor(255, 0, 0))
+                    painter.setPen(QPen(QBrush(gradient), 2))
+                else:
+                    painter.setPen(QPen(QColor(0, 150, 255), 2))  # Bežná modrá aktívna čiara
+                
+                painter.drawLine(p1, p2)
+
+        # 5. Vykreslenie bodov (vrcholov) pre všetky n-uholníky
+        for ngon_idx, points in enumerate(self.ngons):
+            is_active_ngon = (ngon_idx == self.active_ngon_idx)
+            
+            for i, pt in enumerate(points):
+                screen_pt = self.to_screen(pt)
+                
+                if is_active_ngon and i == self.selected_index:
+                    color = QColor(255, 140, 0)
+                    size = 5
+                elif is_active_ngon and i == self.hovered_point_idx:
+                    color = QColor(255, 255, 0)
+                    size = 5
+                elif not is_active_ngon:
+                    color = QColor(80, 80, 80, 150) # Tmavé body pre neaktívne tvary
+                    size = 3
+                else:
+                    color = QColor(255, 255, 255)
+                    size = 4
+                    
+                painter.setBrush(QBrush(color))
+                painter.setPen(QPen(QColor(0, 0, 0), 1) if size > 4 else Qt.NoPen)
+                painter.drawEllipse(screen_pt, size, size)
         
         if self.show_coords:
             painter.setFont(self.font()) # Nastavenie písma
@@ -695,6 +722,37 @@ class MainWindow(QMainWindow):
         """)
         right_layout.addWidget(self.btn_preview)
 
+        # Vytvorenie GroupBoxu pre správu viacerých n-uholníkov
+        ngon_manage_group = QGroupBox("Správa tvarov (NGons)")
+        ngon_manage_layout = QVBoxLayout(ngon_manage_group)
+
+        self.ngon_list_combo = QComboBox() # Nezabudni importovať QComboBox z PySide6.QtWidgets na vrchu súboru
+        self.ngon_list_combo.addItem("Tvar 0")
+        
+        self.btn_add_ngon = QPushButton("Pridať tvar")
+        self.btn_add_ngon.setStyleSheet("""
+            QPushButton { background-color: #2e7d32; color: white; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #388e3c; }
+        """)
+
+        self.btn_delete_ngon = QPushButton("Zmazať tvar")
+        self.btn_delete_ngon.setStyleSheet("""
+            QPushButton { background-color: #c62828; color: white; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #d32f2f; }
+        """)
+
+        ngon_manage_layout.addWidget(QLabel("Vybraný:"))
+        ngon_manage_layout.addWidget(self.ngon_list_combo)
+
+        ngon_add_delete_layout = QHBoxLayout()
+
+        ngon_add_delete_layout.addWidget(self.btn_add_ngon)
+        ngon_add_delete_layout.addWidget(self.btn_delete_ngon)
+        ngon_manage_layout.addLayout(ngon_add_delete_layout)
+        
+        # Pridanie do pravého hlavného panelu
+        right_layout.addWidget(ngon_manage_group)
+
         # 4. Zoznam vrcholov (Outliner)
         right_layout.addWidget(QLabel("Zoznam bodov (Outliner):"))
         self.outliner = QListWidget()
@@ -739,6 +797,66 @@ class MainWindow(QMainWindow):
         self.chk_safe_enable.stateChanged.connect(self.update_canvas_settings)
         for s in [self.spn_l, self.spn_r, self.spn_u, self.spn_d]:
             s.valueChanged.connect(self.update_canvas_settings)
+        
+        self.btn_add_ngon.clicked.connect(self.action_add_new_ngon)
+        self.btn_delete_ngon.clicked.connect(self.action_delete_current_ngon)
+        self.ngon_list_combo.currentIndexChanged.connect(self.action_change_active_ngon)
+
+    def action_add_new_ngon(self):
+        """Pridá nový prázdny n-uholník a prepne sa naň."""
+        self.canvas.ngons.append([])
+        new_idx = len(self.canvas.ngons) - 1
+        
+        # Blokujeme signál, aby sme nevyvolali zmenu indexu dvakrát
+        self.ngon_list_combo.blockSignals(True)
+        self.ngon_list_combo.addItem(f"Tvar {new_idx}")
+        self.ngon_list_combo.setCurrentIndex(new_idx)
+        self.ngon_list_combo.blockSignals(False)
+        
+        self.canvas.active_ngon_idx = new_idx
+        self.canvas.selected_index = -1
+        self.canvas.selected_segment_idx = -1
+        self.update_ui([])
+        self.canvas.update()
+
+    def action_delete_current_ngon(self):
+        """Zmaže aktuálny n-uholník, ak to nie je jediný zostávajúci."""
+        if len(self.canvas.ngons) <= 1:
+            # Ak je posledný, iba ho vyčistíme
+            self.canvas.ngons[0] = []
+            self.canvas.selected_index = -1
+            self.canvas.pointsChanged.emit([])
+            self.canvas.update()
+            return
+
+        idx_to_remove = self.canvas.active_ngon_idx
+        self.canvas.ngons.pop(idx_to_remove)
+        
+        # Nastavíme nový aktívny index
+        self.canvas.active_ngon_idx = max(0, idx_to_remove - 1)
+        
+        # Obnovíme ComboBox
+        self.ngon_list_combo.blockSignals(True)
+        self.ngon_list_combo.clear()
+        for i in range(len(self.canvas.ngons)):
+            self.ngon_list_combo.addItem(f"Tvar {i}")
+        self.ngon_list_combo.setCurrentIndex(self.canvas.active_ngon_idx)
+        self.ngon_list_combo.blockSignals(False)
+        
+        self.canvas.selected_index = -1
+        self.canvas.selected_segment_idx = -1
+        self.canvas.pointsChanged.emit(self.canvas.points)
+        self.canvas.update()
+
+    def action_change_active_ngon(self, index):
+        """Prepne aktívny n-uholník podľa výberu v menu."""
+        if 0 <= index < len(self.canvas.ngons):
+            self.canvas.active_ngon_idx = index
+            self.canvas.selected_index = -1
+            self.canvas.selected_segment_idx = -1
+            # Vyvoláme aktualizáciu UI pre novo zvolený n-uholník
+            self.update_ui(self.canvas.points)
+            self.canvas.update()
 
     def eventFilter(self, watched, event):
         """Zachytí stlačenie klávesu Delete, ak má focus Outliner."""
@@ -862,19 +980,23 @@ class MainWindow(QMainWindow):
     def update_ui(self, points):
         self.outliner.blockSignals(True)
         self.outliner.clear()
-        json_data = []
-        items = []
+        
+        # Outliner plníme len pre AKTÍVNY n-uholník
         for i, pt in enumerate(points):
             self.outliner.addItem(f"Bod {i}: [{pt.x():.1f}, {pt.y():.1f}]")
-            json_data.append({"x": round(pt.x(), 2), "y": round(pt.y(), 2)})
-            items.append(f"{{x: {pt.x():.2f}, y: {pt.y():.2f}}}")
         
         if self.canvas.selected_index != -1:
             self.outliner.setCurrentRow(self.canvas.selected_index)
         self.outliner.blockSignals(False)
 
-        json_code = "const ngon = " + json.dumps(json_data, indent=4) + ";"
-        js_code = "const ngon = [\n    " + ",\n    ".join(items) + "\n];"
+        # GENEROVANIE EXPORTU PRE VŠETKY N-UHOLNÍKY
+        all_ngons_js = []
+        for idx, ngon in enumerate(self.canvas.ngons):
+            items = [f"{{x: {pt.x():.2f}, y: {pt.y():.2f}}}" for pt in ngon]
+            ngon_string = "[\n        " + ",\n        ".join(items) + "\n    ]"
+            all_ngons_js.append(ngon_string)
+            
+        js_code = "const ngons = [\n    " + ",\n    ".join(all_ngons_js) + "\n];"
         self.json_view.setPlainText(js_code)
 
     def sync_selection_to_ui(self, index):
