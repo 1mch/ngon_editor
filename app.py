@@ -159,14 +159,16 @@ class NGonCanvas(QWidget):
         painter.fillRect(self.rect(), QColor(25, 25, 25))
 
         if self.preview_mode:
-            if len(self.points) > 2:
-                # Vykreslenie vyplneného n-uholníka bez okrajov a bodov
-                screen_points = [self.to_screen(p) for p in self.points]
-                poly = QPolygonF(screen_points)
-                painter.setBrush(QBrush(QColor(0, 150, 255, 180))) # Jemná modrá výplň
-                painter.setPen(Qt.NoPen)
-                painter.drawPolygon(poly)
-            return # V režime náhľadu preskakujeme kreslenie mriežky a bodov
+            # Prejdeme cyklom cez úplne všetky n-uholníky v zozname self.ngons
+            for points in self.ngons:
+                if len(points) > 2:
+                    # Vykreslenie vyplneného n-uholníka bez okrajov a bodov
+                    screen_points = [self.to_screen(p) for p in points]
+                    poly = QPolygonF(screen_points)
+                    painter.setBrush(QBrush(QColor(0, 150, 255, 180)))  # Jemná modrá výplň
+                    painter.setPen(Qt.NoPen)
+                    painter.drawPolygon(poly)
+            return  # V režime náhľadu preskakujeme kreslenie mriežky a bodov
 
         # 1. Vykreslenie mriežky (len ak je povolená)
         if self.show_grid:
@@ -532,20 +534,28 @@ class NGonCanvas(QWidget):
             self.selectionChanged.emit(self.selected_index)
             self.update()
 
-    def center_view(self):
-        """Vypočíta ohraničujúci obdĺžnik bodov a upraví zoom a posun tak, aby bol n-uholník v strede."""
-        if not self.points:
-            # Ak nie sú body, vrátime sa na predvolené hodnoty
+    def center_view(self, all_ngons=False):
+        """Vypočíta ohraničujúci obdĺžnik bodov a upraví zoom a posun tak, aby bol tvar v strede."""
+        # Výber bodov na základe parametra
+        if all_ngons:
+            # Zlúčime body zo všetkých n-uholníkov do jedného zoznamu
+            points_to_calc = [pt for ngon in self.ngons for pt in ngon]
+        else:
+            # Použijeme iba body aktuálneho n-uholníka
+            points_to_calc = self.points
+
+        if not points_to_calc:
+            # Ak nie sú žiadne body, vrátime sa na predvolené hodnoty
             self.pan_offset = QPointF(0, 0)
             self.zoom_level = 1.0
             self.update()
             return
 
-        # Zistenie min/max súradníc (Bounding Box)
-        min_x = min(p.x() for p in self.points)
-        max_x = max(p.x() for p in self.points)
-        min_y = min(p.y() for p in self.points)
-        max_y = max(p.y() for p in self.points)
+        # Zistenie min/max súradníc (Bounding Box) z vybraných bodov
+        min_x = min(p.x() for p in points_to_calc)
+        max_x = max(p.x() for p in points_to_calc)
+        min_y = min(p.y() for p in points_to_calc)
+        max_y = max(p.y() for p in points_to_calc)
 
         rect_w = max_x - min_x
         rect_h = max_y - min_y
@@ -554,22 +564,15 @@ class NGonCanvas(QWidget):
         # Výpočet nového zoomu tak, aby sa n-uholník zmestil na 80% plochy (padding)
         margin = 0.8
         
-        # Šírka vo svete, ktorú chceme zobraziť: rect_w / margin
-        # Z rovnice scale: (width / 500) * zoom
-        # Chceme: rect_w * scale = width * margin
-        # Po dosadení scale: rect_w * (width / 500) * zoom = width * margin
-        # zoom = (500 * margin) / rect_w
-        
         zoom_x = (self.target_width_units * margin) / rect_w if rect_w > 0 else float('inf')
         
         # Pre výšku musíme brať do úvahy pomer strán okna
         visible_height_units = self.target_width_units * (self.height() / self.width() if self.width() > 0 else 1)
         zoom_y = (visible_height_units * margin) / rect_h if rect_h > 0 else float('inf')
 
-        # Použijeme menší z oboch zoomov (aby sa to zmestilo v oboch smeroch)
+        # Použijeme menší z oboch zoomov
         new_zoom = min(zoom_x, zoom_y)
         
-        # Ak máme len 1 bod alebo veľmi malý objekt, nedávame nekonečný zoom
         if new_zoom > 10: new_zoom = 1.0
 
         # Aplikácia zmien
@@ -695,19 +698,41 @@ class MainWindow(QMainWindow):
         safe_layout.addWidget(QLabel("Dolná (D):"), 4, 0); safe_layout.addWidget(self.spn_d, 4, 1)
         right_layout.addWidget(safe_group)
 
-        self.btn_center = QPushButton("Vycentrovať pohľad")
-        self.btn_center.setFixedHeight(40)
-        self.btn_center.setStyleSheet("""
+        # Horizontálny layout pre dve tlačidlá vedľa seba
+        center_buttons_layout = QHBoxLayout()
+
+        # Tlačidlo vľavo: Vycentrovať na aktuálny tvar
+        self.btn_center_current = QPushButton("Centrovať aktuálny")
+        self.btn_center_current.setFixedHeight(40)
+        self.btn_center_current.setStyleSheet("""
             QPushButton { 
                 background-color: #455a64; 
                 color: white; 
                 font-weight: bold; 
                 border-radius: 4px;
-                margin-bottom: 5px;
             }
             QPushButton:hover { background-color: #546e7a; }
         """)
-        right_layout.addWidget(self.btn_center)
+
+        # Tlačidlo vpravo: Vycentrovať na všetky tvary
+        self.btn_center_all = QPushButton("Centrovať všetko")
+        self.btn_center_all.setFixedHeight(40)
+        self.btn_center_all.setStyleSheet("""
+            QPushButton { 
+                background-color: #37474f; 
+                color: white; 
+                font-weight: bold; 
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #455a64; }
+        """)
+
+        # Pridanie tlačidiel do horizontálneho layoutu
+        center_buttons_layout.addWidget(self.btn_center_current)
+        center_buttons_layout.addWidget(self.btn_center_all)
+        
+        # Pridanie celého riadku s tlačidlami do hlavného pravého panelu
+        right_layout.addLayout(center_buttons_layout)
 
         self.btn_preview = QPushButton("Spustiť Náhľad")
         self.btn_preview.setFixedHeight(40)
@@ -777,7 +802,9 @@ class MainWindow(QMainWindow):
         self.btn_save.clicked.connect(self.action_save_js)
         self.btn_import.clicked.connect(self.action_import_js)
 
-        self.btn_center.clicked.connect(self.canvas.center_view)
+        self.btn_center_current.clicked.connect(lambda: self.canvas.center_view(all_ngons=False))
+        self.btn_center_all.clicked.connect(lambda: self.canvas.center_view(all_ngons=True))
+        
         self.btn_preview.clicked.connect(self.enable_preview)
         
         # Prepojenie zobrazenia
@@ -945,10 +972,13 @@ class MainWindow(QMainWindow):
         self.canvas.update()
 
     def enable_preview(self):
-        """Zapne režim náhľadu na plátne."""
-        if len(self.canvas.points) > 0:
+        """Zapne režim náhľadu na plátne, ak existuje aspoň jeden vykresliteľný tvar."""
+        # Overíme, či aspoň jeden n-uholník obsahuje nejaké body
+        has_any_points = any(len(ngon) > 0 for ngon in self.canvas.ngons)
+        
+        if has_any_points:
             self.canvas.preview_mode = True
-            self.tabs.setCurrentIndex(0) # Prepnúť na plátno, ak sme v JSONe
+            self.tabs.setCurrentIndex(0)  # Prepnúť na plátno, ak sme v JSONe
             self.canvas.update()
 
     def toggle_both_snap(self, state):
