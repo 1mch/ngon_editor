@@ -4,10 +4,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QTabWidget, QListWidget, QCheckBox, QLabel, QGroupBox, 
     QTextEdit, QDoubleSpinBox, QGridLayout, QDialog, QFormLayout, QDialogButtonBox,
-    QComboBox, QPushButton
+    QComboBox, QPushButton, QToolBar, QSizePolicy, QFrame
 )
-from PySide6.QtCore import Qt, QPointF, QRectF, Signal
-from PySide6.QtGui import QIcon, QLinearGradient, QPainter, QColor, QPen, QBrush, QKeyEvent, QMouseEvent, QWheelEvent, QPolygonF
+from PySide6.QtCore import Qt, QPointF, QRectF, Signal, QSize
+from PySide6.QtGui import QIcon, QLinearGradient, QPainter, QColor, QPen, QBrush, QKeyEvent, QMouseEvent, QWheelEvent, QPolygonF, QAction
 
 from file_manager import save_ngon_to_js, import_ngon_from_js
 
@@ -78,8 +78,8 @@ class NGonCanvas(QWidget):
         
         # Nastavenie bezpečnej zóny (Safe Region)
         self.safe_enabled = False
-        self.safe_l, self.safe_r = -100.0, 100.0
-        self.safe_u, self.safe_d = -100.0, 100.0
+        self.safe_l, self.safe_r = -175.0, 175.0
+        self.safe_u, self.safe_d = -50.0, 0.0
         
         # Stavové premenné pre interakciu s myšou
         self.last_mouse_pos = QPointF()
@@ -96,6 +96,13 @@ class NGonCanvas(QWidget):
         self.hovered_point_idx = -1
         
         self.preview_mode = False
+
+        # --- PREMENNÉ PRE REŽIM ZMENY VEĽKOSTI (SCALE TOOL) ---
+        self.scale_mode_active = False  # Či je nástroj aktívny
+        self.scale_handles = {}         # Súradnice transformačných bodov na obrazovke
+        self.dragging_handle = None     # Identifikátor ťahaného bodu (napr. 'R', 'L', 'T', 'B')
+        self.orig_points_before_scale = [] # Záloha bodov pred začatím ťahania
+        self.scale_bbox = QRectF()      # Aktuálny Bounding Box vo svete
 
     @property
     def points(self):
@@ -182,9 +189,6 @@ class NGonCanvas(QWidget):
         if self.safe_enabled:
             self.draw_safe_region(painter)
 
-        if len(self.points) == 0:
-            return
-
         # 4. Vykreslenie všetkých n-uholníkov
         for ngon_idx, points in enumerate(self.ngons):
             if len(points) == 0:
@@ -238,6 +242,10 @@ class NGonCanvas(QWidget):
                 painter.setBrush(QBrush(color))
                 painter.setPen(QPen(QColor(0, 0, 0), 1) if size > 4 else Qt.NoPen)
                 painter.drawEllipse(screen_pt, size, size)
+
+        # Vykreslenie transformačného obdĺžnika pre Scale Tool
+        if self.scale_mode_active and len(self.points) > 1:
+            self.draw_scale_gizmo(painter)
         
         if self.show_coords:
             painter.setFont(self.font()) # Nastavenie písma
@@ -265,6 +273,48 @@ class NGonCanvas(QWidget):
                 # Kreslenie textu súradníc
                 painter.setPen(text_color)
                 painter.drawText(rect, Qt.AlignCenter, text)
+
+    def draw_scale_gizmo(self, painter):
+        """Vypočíta a vykreslí Bounding Box a transformačné body (handles)."""
+        # Ak práve ťaháme, vizuálny box odvodíme z aktuálnych krajných bodov, 
+        # ale ak neťaháme, prepočítame ho nanovo.
+        if not self.dragging_handle:
+            min_x = min(p.x() for p in self.points)
+            max_x = max(p.x() for p in self.points)
+            min_y = min(p.y() for p in self.points)
+            max_y = max(p.y() for p in self.points)
+            self.scale_bbox = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+            
+        bbox = self.scale_bbox
+        
+        # Prepočet rohov na obrazovku
+        tl = self.to_screen(QPointF(bbox.left(), bbox.top()))
+        br = self.to_screen(QPointF(bbox.right(), bbox.bottom()))
+        
+        # Vykreslenie prerušovaného ohraničujúceho obdĺžnika
+        painter.setPen(QPen(QColor(0, 255, 255), 1, Qt.DashLine))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(QRectF(tl, br))
+        
+        # 3. Definícia pozícií pre stredové transformačné body (handles) na obrazovke
+        mid_x = (tl.x() + br.x()) / 2
+        mid_y = (tl.y() + br.y()) / 2
+        
+        self.scale_handles = {
+            "L": QPointF(tl.x(), mid_y),  # Vľavo
+            "R": QPointF(br.x(), mid_y),  # Vpravo
+            "T": QPointF(mid_x, tl.y()),  # Hore
+            "B": QPointF(mid_x, br.y())   # Dole
+        }
+        
+        # 4. Vykreslenie štvorčekov pre handles
+        handle_size = 8
+        painter.setPen(QPen(QColor(0, 0, 0), 1))
+        painter.setBrush(QBrush(QColor(0, 255, 255)))
+        
+        for name, pt in self.scale_handles.items():
+            # Ak na bode stojíme myšou (v budúcnosti), môžeme zmeniť farbu, teraz stačí základná
+            painter.drawRect(QRectF(pt.x() - handle_size/2, pt.y() - handle_size/2, handle_size, handle_size))
 
     def draw_grid(self, painter):
         top_left = self.to_world(QPointF(0, 0))
@@ -334,6 +384,18 @@ class NGonCanvas(QWidget):
     def mousePressEvent(self, event: QMouseEvent):
         world_pos = self.to_world(event.position())
         self.last_world_pos = world_pos
+
+        # Detekcia kliknutia na Scale Handles (iba ak je Scale Tool aktívny)
+        if self.scale_mode_active and event.button() == Qt.LeftButton:
+            for name, handle_screen_pt in self.scale_handles.items():
+                if (handle_screen_pt - event.position()).manhattanLength() < 10:
+                    self.dragging_handle = name
+                    # Uložíme si kópiu pôvodných bodov pre relatívne prepočty
+                    self.orig_points_before_scale = [QPointF(p.x(), p.y()) for p in self.points]
+                    self.orig_bbox_before_scale = QRectF(self.scale_bbox) # Pevná záloha boxu
+                    self.mouse_press_world_pos = world_pos # Pevná štartovacia pozícia myši
+                    return  # Prerušíme vykonávanie, spracovali sme klik na transformáciu
+            return
         
         if self.preview_mode:
             self.preview_mode = False
@@ -405,6 +467,73 @@ class NGonCanvas(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent):
         world_pos = self.to_world(event.position())
+
+        # Logika pre zmenu veľkosti (Scale)
+        if self.scale_mode_active and self.dragging_handle:
+            bbox = self.orig_bbox_before_scale
+            if bbox.width() == 0 or bbox.height() == 0:
+                return
+
+            # Výpočet posunu myši od momentu stlačenia
+            delta_mouse = world_pos - self.mouse_press_world_pos
+
+            # Ak je zapnutý snap, zaokrúhlime samotný posun myši, nie jednotlivé body tvaru
+            if self.snap_x:
+                can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
+                step = 1.0 if can_show_sub_grid else 10.0
+                delta_mouse.setX(round(delta_mouse.x() / step) * step)
+            if self.snap_y:
+                can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
+                step = 1.0 if can_show_sub_grid else 10.0
+                delta_mouse.setY(round(delta_mouse.y() / step) * step)
+
+            scale_factor_x = 1.0
+            scale_factor_y = 1.0
+            anchor = QPointF()
+
+            # Výpočet novej mierky na základe akumulovaného posunu delta_mouse
+            if self.dragging_handle == "R":
+                anchor = QPointF(bbox.left(), bbox.top() + bbox.height()/2)
+                new_width = bbox.width() + delta_mouse.x()
+                if abs(new_width) < 0.01: new_width = 0.01
+                scale_factor_x = new_width / bbox.width()
+            
+            elif self.dragging_handle == "L":
+                anchor = QPointF(bbox.right(), bbox.top() + bbox.height()/2)
+                new_width = bbox.width() - delta_mouse.x()
+                if abs(new_width) < 0.01: new_width = 0.01
+                scale_factor_x = new_width / bbox.width()
+
+            elif self.dragging_handle == "B":
+                anchor = QPointF(bbox.left() + bbox.width()/2, bbox.top())
+                new_height = bbox.height() + delta_mouse.y()
+                if abs(new_height) < 0.01: new_height = 0.01
+                scale_factor_y = new_height / bbox.height()
+
+            elif self.dragging_handle == "T":
+                anchor = QPointF(bbox.left() + bbox.width()/2, bbox.bottom())
+                new_height = bbox.height() - delta_mouse.y()
+                if abs(new_height) < 0.01: new_height = 0.01
+                scale_factor_y = new_height / bbox.height()
+
+            # Plynulá aplikácia transformácie z originálnych bodov
+            for i, orig_pt in enumerate(self.orig_points_before_scale):
+                dx = orig_pt.x() - anchor.x()
+                dy = orig_pt.y() - anchor.y()
+                
+                # Výsledný bod (bez deformovania mriežkou počas pohybu)
+                self.points[i] = QPointF(anchor.x() + dx * scale_factor_x, anchor.y() + dy * scale_factor_y)
+
+            # NOVÉ: Dynamický prepočet rámu (scale_bbox) počas ťahania
+            min_x = min(p.x() for p in self.points)
+            max_x = max(p.x() for p in self.points)
+            min_y = min(p.y() for p in self.points)
+            max_y = max(p.y() for p in self.points)
+            self.scale_bbox = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+
+            self.pointsChanged.emit(self.points)
+            self.update()
+            return
         
         if self.is_panning:
             delta = event.position() - self.last_mouse_pos
@@ -448,9 +577,34 @@ class NGonCanvas(QWidget):
 
         old_h_point = self.hovered_point_idx
         old_h_segment = self.hovered_segment_idx
+
+        # Ak je aktívny Scale Tool, riešime iba zmenu kurzora nad kontrolnými bodmi
+        if self.scale_mode_active and not self.is_panning and self.dragging_handle is None:
+            hover_handle = None
+            for name, handle_screen_pt in self.scale_handles.items():
+                if (handle_screen_pt - event.position()).manhattanLength() < 10:
+                    hover_handle = name
+                    break
+            
+            if hover_handle:
+                if hover_handle in ["L", "R"]:
+                    self.setCursor(Qt.SizeHorCursor)
+                else:
+                    self.setCursor(Qt.SizeVerCursor)
+            else:
+                self.setCursor(Qt.ArrowCursor)
+            return  # V Scale móde už nepokračujeme na detekciu bodov n-uholníka
         
         self.hovered_point_idx = -1
         self.hovered_segment_idx = -1
+
+        # Zmena kurzora, ak sme nad nejakým handle v Scale režime
+        if self.scale_mode_active and not self.is_panning and self.dragging_handle is None:
+            for name, handle_screen_pt in self.scale_handles.items():
+                if (handle_screen_pt - event.position()).manhattanLength() < 10:
+                    if name in ["L", "R"]: self.setCursor(Qt.SizeHorCursor)
+                    else: self.setCursor(Qt.SizeVerCursor)
+                    return
         
         # Kontrola prechodu myši nad bodmi
         for i, pt in enumerate(self.points):
@@ -477,10 +631,13 @@ class NGonCanvas(QWidget):
         self.dragging_point_idx = -1
         self.dragging_segment_idx = -1
         self.dragging_all = False
+        self.dragging_handle = None
         self.setCursor(Qt.ArrowCursor)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         """Zistí, či bol zasiahnutý bod, a ak áno, vyvolá signál pre editáciu."""
+        if self.scale_mode_active:
+            return # V Scale móde ignorujeme dvojklik na úpravu bodov
         hit_index = -1
         for i, pt in enumerate(self.points):
             dist = (self.to_screen(pt) - event.position()).manhattanLength()
@@ -586,83 +743,142 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("NGon Editor")
         self.resize(1200, 800)
 
-        # Nastavenie vlastnej ikony okna
         self.setWindowIcon(QIcon("icon.png"))
 
-        self.setStyleSheet("QMainWindow { background-color: #252525; } QGroupBox { color: #aaa; font-weight: bold; }")
+        self.setStyleSheet("""
+            QMainWindow { background-color: #252525; }
+            QGroupBox { color: #aaa; font-weight: bold; }
+            QToolBar {
+                background-color: #1a1a1a;
+                border-bottom: 1px solid #3a3a3a;
+                spacing: 2px;
+                padding: 3px 6px;
+            }
+            QToolBar QToolButton {
+                background-color: #2d2d2d;
+                color: #cccccc;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 12px;
+                min-width: 28px;
+            }
+            QToolBar QToolButton:hover {
+                background-color: #3d3d3d;
+                color: #ffffff;
+                border-color: #666;
+            }
+            QToolBar QToolButton:checked {
+                background-color: #1565c0;
+                color: #ffffff;
+                border-color: #1976d2;
+            }
+            QToolBar QToolButton:checked:hover {
+                background-color: #1976d2;
+            }
+            QToolBar::separator {
+                width: 1px;
+                background-color: #3a3a3a;
+                margin: 4px 6px;
+            }
+        """)
 
+        # ── TOOLBAR ──────────────────────────────────────────────────────────
+        toolbar = QToolBar("Hlavný panel nástrojov")
+        toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(16, 16))
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.addToolBar(Qt.TopToolBarArea, toolbar)
+
+        # Súbor
+        self.btn_import = toolbar.addAction("⬆ Import")
+        self.btn_import.setToolTip("Importovať tvar zo súboru JS")
+        self.btn_save = toolbar.addAction("💾 Uložiť")
+        self.btn_save.setToolTip("Uložiť tvar do súboru JS")
+
+        toolbar.addSeparator()
+
+        # Zobrazenie – toggle akcie
+        self.act_axes = QAction("🗡 Osi", self)
+        self.act_axes.setCheckable(True)
+        self.act_axes.setChecked(True)
+        self.act_axes.setToolTip("Zobraziť / skryť hlavné osi")
+        toolbar.addAction(self.act_axes)
+
+        self.act_grid = QAction("⊞ Mriežka", self)
+        self.act_grid.setCheckable(True)
+        self.act_grid.setChecked(True)
+        self.act_grid.setToolTip("Zobraziť / skryť mriežku")
+        toolbar.addAction(self.act_grid)
+
+        self.act_coords = QAction("🔢 Coords", self)
+        self.act_coords.setCheckable(True)
+        self.act_coords.setChecked(False)
+        self.act_coords.setToolTip("Zobraziť / skryť súradnice bodov")
+        toolbar.addAction(self.act_coords)
+
+        toolbar.addSeparator()
+
+        # Akcie
+        self.act_scale_tool = QAction("⤗ Mierka", self)
+        self.act_scale_tool.setCheckable(True)
+        self.act_scale_tool.setChecked(False)
+        self.act_scale_tool.setToolTip("Aktivovať nástroj na zmenu veľkosti (Scale Tool)")
+        toolbar.addAction(self.act_scale_tool)
+
+        self.act_smooth = toolbar.addAction("〜 Smooth")
+        self.act_smooth.setToolTip("Vyhladiť tvar (Chaikin)")
+
+        self.act_center = toolbar.addAction("⊙ Centrovať")
+        self.act_center.setToolTip("Vycentrovať pohľad na aktuálny tvar")
+
+        self.act_center_all = toolbar.addAction("⊛ Centrovať všetko")
+        self.act_center_all.setToolTip("Vycentrovať pohľad na všetky tvary")
+
+        self.act_preview = toolbar.addAction("▶ Náhľad")
+        self.act_preview.setToolTip("Zobraziť vyplnený náhľad tvaru")
+
+        # Spacer aby ďalšie prvky išli doprava
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(spacer)
+
+        # ── CENTRÁLNY WIDGET ─────────────────────────────────────────────────
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         layout = QHBoxLayout(main_widget)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
 
         # Hlavná časť so záložkami
         self.tabs = QTabWidget()
         self.canvas = NGonCanvas()
         self.tabs.addTab(self.canvas, "Návrhové plátno")
-        
+
         self.json_view = QTextEdit()
         self.json_view.setReadOnly(True)
         self.json_view.setStyleSheet("background-color: #1e1e1e; color: #9cdcfe; font-family: 'Consolas';")
         self.tabs.addTab(self.json_view, "JavaScript výstup")
         layout.addWidget(self.tabs, stretch=4)
 
-        # Bočný ovládací panel
+        # ── BOČNÝ PANEL (slim) ───────────────────────────────────────────────
         right_panel = QWidget()
+        right_panel.setMaximumWidth(220)
         right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(2, 2, 2, 2)
+        right_layout.setSpacing(6)
         layout.addWidget(right_panel, stretch=1)
 
-        # Vytvorenie GroupBoxu pre súborové operácie
-        file_group = QGroupBox("Súbor")
-        file_layout = QHBoxLayout(file_group)
-
-        self.btn_import = QPushButton("Import")
-        self.btn_import.setFixedHeight(35)
-        self.btn_import.setStyleSheet("""
-            QPushButton { background-color: #37474f; color: white; font-weight: bold; border-radius: 4px; }
-            QPushButton:hover { background-color: #455a64; }
-        """)
-
-        self.btn_save = QPushButton("Uložiť")
-        self.btn_save.setFixedHeight(35)
-        self.btn_save.setStyleSheet("""
-            QPushButton { background-color: #00838f; color: white; font-weight: bold; border-radius: 4px; }
-            QPushButton:hover { background-color: #0097a7; }
-        """)
-
-        file_layout.addWidget(self.btn_import)
-        file_layout.addWidget(self.btn_save)
-        right_layout.addWidget(file_group) # Pridanie do pravého panelu
-
-        # 1. Možnosti zobrazenia (Mriežka a osi)
-        vis_group = QGroupBox("Možnosti zobrazenia")
-        vis_layout = QVBoxLayout(vis_group)
-        
-        self.chk_axes = QCheckBox("Zobraziť hlavné osi")
-        self.chk_axes.setChecked(True)
-        vis_layout.addWidget(self.chk_axes)
-        
-        # Jediný globálny prepínač pre mriežku
-        self.chk_grid_master = QCheckBox("Zobraziť mriežku")
-        self.chk_grid_master.setChecked(True)
-        vis_layout.addWidget(self.chk_grid_master)
-
-        self.chk_coords = QCheckBox("Zobraziť súradnice")
-        vis_layout.addWidget(self.chk_coords)
-            
-        right_layout.addWidget(vis_group)
-
-        # 2. Nastavenia prichytávania
+        # Prichytávanie
         snap_group = QGroupBox("Prichytávanie (Snap)")
         snap_layout = QGridLayout(snap_group)
-        self.check_snap_x = QCheckBox("Prichytiť na X")
-        self.check_snap_y = QCheckBox("Prichytiť na Y")
-        self.check_snap_both = QCheckBox("Prichytiť na obe osi")
-        # NOVÉ: Tlačidlo pre hromadné prichytenie na celé čísla
-        self.btn_snap_all_int = QPushButton("Prichytiť všetko na celé čísla")
+        snap_layout.setSpacing(4)
+        self.check_snap_x = QCheckBox("Snap X")
+        self.check_snap_y = QCheckBox("Snap Y")
+        self.check_snap_both = QCheckBox("Snap X+Y")
+        self.btn_snap_all_int = QPushButton("Prichytiť na celé čísla")
         self.btn_snap_all_int.setStyleSheet("""
-            QPushButton { 
-                background-color: #006064; color: white; font-weight: bold; border-radius: 4px; padding: 4px; 
-            }
+            QPushButton { background-color: #006064; color: white; font-weight: bold; border-radius: 4px; padding: 3px; }
             QPushButton:hover { background-color: #00838f; }
         """)
         snap_layout.addWidget(self.check_snap_x, 0, 0)
@@ -671,163 +887,137 @@ class MainWindow(QMainWindow):
         snap_layout.addWidget(self.btn_snap_all_int, 2, 0, 1, 2)
         right_layout.addWidget(snap_group)
 
-        # NOVÉ: Tlačidlo pre vyhladenie (Smooth)
-        self.btn_smooth_all = QPushButton("Vyhladiť tvar (Smooth)")
-        self.btn_smooth_all.setStyleSheet("""
-            QPushButton { 
-                background-color: #7b1fa2; color: white; font-weight: bold; border-radius: 4px; padding: 4px; 
-            }
-            QPushButton:hover { background-color: #8e24aa; }
-        """)
-        # Pridáme ho do layoutu prichytávania (alebo hocikam inam pod ním)
-        snap_layout.addWidget(self.btn_smooth_all, 3, 0, 1, 2)
-
-        # 3. Nastavenie bezpečnej zóny
+        # Bezpečná zóna
         safe_group = QGroupBox("Bezpečná zóna")
         safe_layout = QGridLayout(safe_group)
-        self.chk_safe_enable = QCheckBox("Povoliť bezpečnú zónu")
-        self.spn_l = QDoubleSpinBox(); self.spn_l.setRange(-1000, 1000); self.spn_l.setValue(-100)
-        self.spn_r = QDoubleSpinBox(); self.spn_r.setRange(-1000, 1000); self.spn_r.setValue(100)
-        self.spn_u = QDoubleSpinBox(); self.spn_u.setRange(-1000, 1000); self.spn_u.setValue(-100)
-        self.spn_d = QDoubleSpinBox(); self.spn_d.setRange(-1000, 1000); self.spn_d.setValue(100)
-        
+        safe_layout.setSpacing(3)
+        self.chk_safe_enable = QCheckBox("Povoliť")
+        self.spn_l = QDoubleSpinBox(); self.spn_l.setRange(-1000, 1000); self.spn_l.setValue(-175)
+        self.spn_r = QDoubleSpinBox(); self.spn_r.setRange(-1000, 1000); self.spn_r.setValue(175)
+        self.spn_u = QDoubleSpinBox(); self.spn_u.setRange(-1000, 1000); self.spn_u.setValue(-50)
+        self.spn_d = QDoubleSpinBox(); self.spn_d.setRange(-1000, 1000); self.spn_d.setValue(0)
         safe_layout.addWidget(self.chk_safe_enable, 0, 0, 1, 2)
-        safe_layout.addWidget(QLabel("Ľavá (L):"), 1, 0); safe_layout.addWidget(self.spn_l, 1, 1)
-        safe_layout.addWidget(QLabel("Pravá (R):"), 2, 0); safe_layout.addWidget(self.spn_r, 2, 1)
-        safe_layout.addWidget(QLabel("Horná (U):"), 3, 0); safe_layout.addWidget(self.spn_u, 3, 1)
-        safe_layout.addWidget(QLabel("Dolná (D):"), 4, 0); safe_layout.addWidget(self.spn_d, 4, 1)
+        safe_layout.addWidget(QLabel("L:"), 1, 0); safe_layout.addWidget(self.spn_l, 1, 1)
+        safe_layout.addWidget(QLabel("R:"), 2, 0); safe_layout.addWidget(self.spn_r, 2, 1)
+        safe_layout.addWidget(QLabel("U:"), 3, 0); safe_layout.addWidget(self.spn_u, 3, 1)
+        safe_layout.addWidget(QLabel("D:"), 4, 0); safe_layout.addWidget(self.spn_d, 4, 1)
         right_layout.addWidget(safe_group)
 
-        # Horizontálny layout pre dve tlačidlá vedľa seba
-        center_buttons_layout = QHBoxLayout()
-
-        # Tlačidlo vľavo: Vycentrovať na aktuálny tvar
-        self.btn_center_current = QPushButton("Centrovať aktuálny")
-        self.btn_center_current.setFixedHeight(40)
-        self.btn_center_current.setStyleSheet("""
-            QPushButton { 
-                background-color: #455a64; 
-                color: white; 
-                font-weight: bold; 
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #546e7a; }
-        """)
-
-        # Tlačidlo vpravo: Vycentrovať na všetky tvary
-        self.btn_center_all = QPushButton("Centrovať všetko")
-        self.btn_center_all.setFixedHeight(40)
-        self.btn_center_all.setStyleSheet("""
-            QPushButton { 
-                background-color: #37474f; 
-                color: white; 
-                font-weight: bold; 
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #455a64; }
-        """)
-
-        # Pridanie tlačidiel do horizontálneho layoutu
-        center_buttons_layout.addWidget(self.btn_center_current)
-        center_buttons_layout.addWidget(self.btn_center_all)
-        
-        # Pridanie celého riadku s tlačidlami do hlavného pravého panelu
-        right_layout.addLayout(center_buttons_layout)
-
-        self.btn_preview = QPushButton("Spustiť Náhľad")
-        self.btn_preview.setFixedHeight(40)
-        self.btn_preview.setStyleSheet("""
-            QPushButton { 
-                background-color: #2e7d32; 
-                color: white; 
-                font-weight: bold; 
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #388e3c; }
-        """)
-        right_layout.addWidget(self.btn_preview)
-
-        # Vytvorenie GroupBoxu pre správu viacerých n-uholníkov
-        ngon_manage_group = QGroupBox("Správa tvarov (NGons)")
+        # Správa tvarov
+        ngon_manage_group = QGroupBox("Správa tvarov")
         ngon_manage_layout = QVBoxLayout(ngon_manage_group)
+        ngon_manage_layout.setSpacing(4)
 
-        self.ngon_list_combo = QComboBox() # Nezabudni importovať QComboBox z PySide6.QtWidgets na vrchu súboru
+        self.ngon_list_combo = QComboBox()
         self.ngon_list_combo.addItem("Tvar 0")
-        
-        self.btn_add_ngon = QPushButton("Pridať tvar")
+
+        self.btn_add_ngon = QPushButton("+ Pridať tvar")
         self.btn_add_ngon.setStyleSheet("""
             QPushButton { background-color: #2e7d32; color: white; font-weight: bold; border-radius: 4px; }
             QPushButton:hover { background-color: #388e3c; }
         """)
-
-        self.btn_delete_ngon = QPushButton("Zmazať tvar")
+        self.btn_delete_ngon = QPushButton("✕ Zmazať tvar")
         self.btn_delete_ngon.setStyleSheet("""
             QPushButton { background-color: #c62828; color: white; font-weight: bold; border-radius: 4px; }
             QPushButton:hover { background-color: #d32f2f; }
         """)
 
-        ngon_manage_layout.addWidget(QLabel("Vybraný:"))
         ngon_manage_layout.addWidget(self.ngon_list_combo)
-
-        ngon_add_delete_layout = QHBoxLayout()
-
-        ngon_add_delete_layout.addWidget(self.btn_add_ngon)
-        ngon_add_delete_layout.addWidget(self.btn_delete_ngon)
-        ngon_manage_layout.addLayout(ngon_add_delete_layout)
-        
-        # Pridanie do pravého hlavného panelu
+        ngon_btns = QHBoxLayout()
+        ngon_btns.addWidget(self.btn_add_ngon)
+        ngon_btns.addWidget(self.btn_delete_ngon)
+        ngon_manage_layout.addLayout(ngon_btns)
         right_layout.addWidget(ngon_manage_group)
 
-        # 4. Zoznam vrcholov (Outliner)
-        right_layout.addWidget(QLabel("Zoznam bodov (Outliner):"))
+        # Outliner
+        right_layout.addWidget(QLabel("Body (Outliner):"))
         self.outliner = QListWidget()
-        # Inštalácia event filtra na zachytávanie klávesov priamo v Outlineri
         self.outliner.installEventFilter(self)
         right_layout.addWidget(self.outliner)
 
+        # Skryté checkboxy pre spätnú kompatibilitu so setup_connections / update_canvas_settings
+        self.chk_axes = QCheckBox()
+        self.chk_axes.setChecked(True)
+        self.chk_axes.setVisible(False)
+        self.chk_grid_master = QCheckBox()
+        self.chk_grid_master.setChecked(True)
+        self.chk_grid_master.setVisible(False)
+        self.chk_coords = QCheckBox()
+        self.chk_coords.setChecked(False)
+        self.chk_coords.setVisible(False)
+
+        # Skryté tlačidlá – toolbar ich nahrádza, ale setup_connections ich používa
+        self.btn_save_widget = QPushButton()
+        self.btn_save_widget.setVisible(False)
+        self.btn_import_widget = QPushButton()
+        self.btn_import_widget.setVisible(False)
+        self.btn_smooth_all = QPushButton()
+        self.btn_smooth_all.setVisible(False)
+        self.btn_center_current = QPushButton()
+        self.btn_center_current.setVisible(False)
+        self.btn_center_all = QPushButton()
+        self.btn_center_all.setVisible(False)
+        self.btn_preview = QPushButton()
+        self.btn_preview.setVisible(False)
+
         self.setup_connections()
         self.update_ui([])
-        self.update_canvas_settings() # Inicializácia stavu zaškrtávadiel
+        self.update_canvas_settings()
 
     def setup_connections(self):
         self.canvas.pointsChanged.connect(self.update_ui)
         self.canvas.selectionChanged.connect(self.sync_selection_to_ui)
         self.outliner.currentRowChanged.connect(self.sync_selection_to_canvas)
-        
+
         self.canvas.pointDoubleClicked.connect(self.open_coordinate_editor)
         self.outliner.itemDoubleClicked.connect(
             lambda item: self.open_coordinate_editor(self.outliner.row(item))
         )
 
-        self.btn_save.clicked.connect(self.action_save_js)
-        self.btn_import.clicked.connect(self.action_import_js)
+        # Toolbar – súbor
+        self.btn_save.triggered.connect(self.action_save_js)
+        self.btn_import.triggered.connect(self.action_import_js)
 
-        self.btn_center_current.clicked.connect(lambda: self.canvas.center_view(all_ngons=False))
-        self.btn_center_all.clicked.connect(lambda: self.canvas.center_view(all_ngons=True))
-        
-        self.btn_preview.clicked.connect(self.enable_preview)
-        
-        # Prepojenie zobrazenia
-        self.chk_grid_master.stateChanged.connect(self.update_canvas_settings)
-        self.chk_axes.stateChanged.connect(self.update_canvas_settings)
-        self.chk_coords.stateChanged.connect(self.update_canvas_settings)
-        
-        # Prepojenie prichytávania
+        # Toolbar – toggle zobrazenia
+        self.act_axes.toggled.connect(self._sync_axes)
+        self.act_grid.toggled.connect(self._sync_grid)
+        self.act_coords.toggled.connect(self._sync_coords)
+
+        # Toolbar – akcie
+        self.act_scale_tool.toggled.connect(self._sync_scale_tool)
+        self.act_smooth.triggered.connect(self.smooth_all_points)
+        self.act_center.triggered.connect(lambda: self.canvas.center_view(all_ngons=False))
+        self.act_center_all.triggered.connect(lambda: self.canvas.center_view(all_ngons=True))
+        self.act_preview.triggered.connect(self.enable_preview)
+
+        # Prichytávanie
         self.check_snap_x.stateChanged.connect(self.update_canvas_settings)
         self.check_snap_y.stateChanged.connect(self.update_canvas_settings)
         self.check_snap_both.stateChanged.connect(self.toggle_both_snap)
-        self.btn_snap_all_int.clicked.connect(self.snap_all_points_to_integer) # NOVÉ PREPOJENIE
+        self.btn_snap_all_int.clicked.connect(self.snap_all_points_to_integer)
 
-        self.btn_smooth_all.clicked.connect(self.smooth_all_points)
-
-        # Prepojenie bezpečnej zóny
+        # Bezpečná zóna
         self.chk_safe_enable.stateChanged.connect(self.update_canvas_settings)
         for s in [self.spn_l, self.spn_r, self.spn_u, self.spn_d]:
             s.valueChanged.connect(self.update_canvas_settings)
-        
+
+        # Správa tvarov
         self.btn_add_ngon.clicked.connect(self.action_add_new_ngon)
         self.btn_delete_ngon.clicked.connect(self.action_delete_current_ngon)
         self.ngon_list_combo.currentIndexChanged.connect(self.action_change_active_ngon)
+
+    # ── Sync helpery pre toolbar toggle akcie ────────────────────────────────
+    def _sync_axes(self, checked):
+        self.chk_axes.setChecked(checked)
+        self.update_canvas_settings()
+
+    def _sync_grid(self, checked):
+        self.chk_grid_master.setChecked(checked)
+        self.update_canvas_settings()
+
+    def _sync_coords(self, checked):
+        self.chk_coords.setChecked(checked)
+        self.update_canvas_settings()
 
     def action_add_new_ngon(self):
         """Pridá nový prázdny n-uholník a prepne sa naň."""
@@ -894,18 +1084,31 @@ class MainWindow(QMainWindow):
         return super().eventFilter(watched, event)
     
     def action_save_js(self):
-        # Zavolá pomocnú funkciu a odovzdá aktuálne body z plátna
-        save_ngon_to_js(self, self.canvas.points)
+        # POZMENA: Namiesto self.canvas.points posielame kompletne celé self.canvas.ngons
+        save_ngon_to_js(self, self.canvas.ngons)
 
     def action_import_js(self):
-        # Zavolá pomocnú funkciu a ak sa načítanie podarí, aktualizuje plátno a UI
-        imported_points = import_ngon_from_js(self)
-        if imported_points is not None:
-            self.canvas.points = imported_points
+        # POZMENA: Načítame zoznam všetkých tvarov (2D pole)
+        imported_ngons = import_ngon_from_js(self)
+        if imported_ngons is not None:
+            self.canvas.ngons = imported_ngons
+            
+            # Prepne index na prvý n-uholník
+            self.canvas.active_ngon_idx = 0
             self.canvas.selected_index = -1
             self.canvas.selected_segment_idx = -1
+            
+            # Aktualizujeme rozbaľovacie menu (ComboBox) podľa počtu načítaných tvarov
+            self.ngon_list_combo.blockSignals(True)
+            self.ngon_list_combo.clear()
+            for i in range(len(self.canvas.ngons)):
+                self.ngon_list_combo.addItem(f"Tvar {i}")
+            self.ngon_list_combo.setCurrentIndex(0)
+            self.ngon_list_combo.blockSignals(False)
+            
+            # Aktualizujeme UI a plátno
             self.canvas.pointsChanged.emit(self.canvas.points)
-            self.canvas.center_view() # Vycentruje novo importovaný tvar
+            self.canvas.center_view(all_ngons=True) # Vycentruje zobrazenie na všetky tvary
             self.canvas.update()
 
     def snap_all_points_to_integer(self):
@@ -919,6 +1122,10 @@ class MainWindow(QMainWindow):
             
         # Oznámime aplikácii zmenu, aby sa prekreslilo plátno a aktualizoval Outliner/JSON
         self.canvas.pointsChanged.emit(self.canvas.points)
+        self.canvas.update()
+
+    def _sync_scale_tool(self, checked):
+        self.canvas.scale_mode_active = checked
         self.canvas.update()
 
     def smooth_all_points(self):

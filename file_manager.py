@@ -3,18 +3,18 @@ import json
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from PySide6.QtCore import QPointF
 
-def save_ngon_to_js(parent, points, filepath=None):
+def save_ngon_to_js(parent, all_ngons, filepath=None):
     """
-    Uloží zoznam bodov (QPointF) do JavaScript súboru vo formáte:
-    const ngon = [
-        { "x": 10.0, "y": 20.0 },
-        ...
+    Uloží zoznam VŠETKÝCH n-uholníkov do JavaScript súboru vo formáte:
+    const ngons = [
+        [ { "x": 10.0, "y": 20.0 }, ... ],
+        [ { "x": 30.0, "y": 40.0 }, ... ]
     ];
-    
-    Ak 'filepath' nie je definovaný, otvorí sa štandardný ukladací dialóg.
     """
-    if not points:
-        QMessageBox.warning(parent, "Upozornenie", "Nie je čo uložiť. N-uholník neobsahuje žiadne body.")
+    # Overíme, či aspoň jeden n-uholník obsahuje nejaké body
+    has_points = any(len(ngon) > 0 for ngon in all_ngons) if all_ngons else False
+    if not has_points:
+        QMessageBox.warning(parent, "Upozornenie", "Nie je čo uložiť. Žiadny n-uholník neobsahuje body.")
         return False
 
     if not filepath:
@@ -26,18 +26,22 @@ def save_ngon_to_js(parent, points, filepath=None):
         )
     
     if not filepath:
-        return False  # Používateľ zrušil dialóg
+        return False
 
     try:
-        # Príprava dát do formátu JSON kompatibilného s JS
-        json_data = [{"x": round(pt.x(), 2), "y": round(pt.y(), 2)} for pt in points]
-        js_content = f"const ngon = {json.dumps(json_data, indent=4)};\n"
+        # Transformujeme 2D pole QPointF objektov do čistého JSON formátu
+        json_data = []
+        for ngon in all_ngons:
+            ngon_data = [{"x": round(pt.x(), 2), "y": round(pt.y(), 2)} for pt in ngon]
+            json_data.append(ngon_data)
 
-        # Zápis do súboru
+        # Uložíme ako pole polí (const ngons)
+        js_content = f"const ngons = {json.dumps(json_data, indent=4)};\n"
+
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(js_content)
             
-        QMessageBox.information(parent, "Úspech", f"N-uholník bol úspešne uložený do:\n{filepath}")
+        QMessageBox.information(parent, "Úspech", f"Všetky tvary boli úspešne uložené do:\n{filepath}")
         return True
     except Exception as e:
         QMessageBox.critical(parent, "Chyba", f"Nepodarilo sa uložiť súbor:\n{str(e)}")
@@ -45,13 +49,12 @@ def save_ngon_to_js(parent, points, filepath=None):
 
 def import_ngon_from_js(parent):
     """
-    Otvorí dialóg na výber JS súboru, načíta dáta n-uholníka a vráti zoznam objektov QPointF.
-    Podporuje flexibilný import pomocou regulárnych výrazov na extrakciu JSON/JS poľa.
+    Otvorí dialóg, načíta dáta VŠETKÝCH n-uholníkov zo súboru a vráti 2D zoznam objektov QPointF.
     V prípade chyby alebo zrušenia vráti None.
     """
     filepath, _ = QFileDialog.getOpenFileName(
         parent,
-        "Importovať n-uholník z JavaScriptu",
+        "Importovať n-uholníky z JavaScriptu",
         "",
         "JavaScript súbory (*.js);;Všetky súbory (*)"
     )
@@ -63,35 +66,50 @@ def import_ngon_from_js(parent):
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # Regulárny výraz vyhľadá pole objektov [ ... ] v súbore.
-        # Odstráni priradenie "const ngon =" a vyextrahuje čistú textovú reprezentáciu poľa.
-        match = re.search(r'=\s*(\[\s*\{.*?\}\s*\])', content, re.DOTALL)
+        # Vyhľadá pole polí priradené do premennej (napr. const ngons = [ ... ])
+        # Hľadá od prvého znaku '[' až po posledný znak ']'
+        match = re.search(r'=\s*(\[.*\])', content, re.DOTALL)
         if not match:
-            # Ak chýba "const ngon =", skúsime vyhľadať akékoľvek pole objektov
-            match = re.search(r'(\[\s*\{.*?\}\s*\])', content, re.DOTALL)
+            # Fallback, ak chýba priradenie cez "="
+            match = re.search(r'(\[.*\])', content, re.DOTALL)
 
         if not match:
-            raise ValueError("V súbore sa nenašlo validné JavaScript pole s bodmi (formát: [{...}, {...}]).")
+            raise ValueError("V súbore sa nenašlo validné JavaScript pole (formát: [[...], [...]]).")
 
         raw_json = match.group(1)
         
-        # Ošetrenie prípadných drobných rozdielov v JS zápise (napr. chýbajúce úvodzovky pri kľúčoch)
-        # Prevedieme kľúče bez úvodzoviek na štandardný JSON formát
+        # Ošetrenie chýbajúcich úvodzoviek pri kľúčoch (x:, y:) v JS
         raw_json = re.sub(r'(\s*?)(\w+)(\s*:\s*)', r'\1"\2"\3', raw_json)
 
         data = json.loads(raw_json)
         
         if not isinstance(data, list):
-            raise ValueError("Dáta v súbore musia byť vo forme poľa.")
+            raise ValueError("Dáta v súbore musia byť vo forme hlavného poľa.")
 
-        points = []
-        for i, item in enumerate(data):
-            if "x" not in item or "y" not in item:
-                raise ValueError(f"Bod na indexe {i} neobsahuje povinné súradnice 'x' a 'y'.")
-            points.append(QPointF(float(item["x"]), float(item["y"])))
+        all_ngons = []
+        
+        for ngon_idx, ngon_item in enumerate(data):
+            # Ak by bol náhodou starý súbor exportovaný len ako 1D pole (kompatibilita),
+            # alebo ak ide o správne vnorené pole:
+            if isinstance(ngon_item, list):
+                points = []
+                for pt_idx, item in enumerate(ngon_item):
+                    if "x" not in item or "y" not in item:
+                        raise ValueError(f"Tvar {ngon_idx}, bod {pt_idx} neobsahuje súradnice 'x' a 'y'.")
+                    points.append(QPointF(float(item["x"]), float(item["y"])))
+                all_ngons.append(points)
+            else:
+                # Spätná kompatibilita: Ak importujeme starý súbor, kde bol len 1 tvar (nie pole polí)
+                if ngon_idx == 0 and isinstance(ngon_item, dict) and "x" in ngon_item:
+                    # Spracujeme súbor ako jeden jediný n-uholník
+                    points = []
+                    for item in data:
+                        points.append(QPointF(float(item["x"]), float(item["y"])))
+                    return [points]
+                raise ValueError(f"Prvok na indexe {ngon_idx} nie je platné pole bodov tvaru.")
 
-        return points
+        return all_ngons
 
     except Exception as e:
-        QMessageBox.critical(parent, "Chyba pri importe", f"Nepodarilo sa načítať body zo súboru:\n{str(e)}")
+        QMessageBox.critical(parent, "Chyba pri importe", f"Nepodarilo sa načítať tvary zo súboru:\n{str(e)}")
         return None
