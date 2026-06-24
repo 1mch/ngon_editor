@@ -405,6 +405,8 @@ class NGonCanvas(QWidget):
         if event.modifiers() & Qt.ShiftModifier and event.button() == Qt.LeftButton:
             if self.points:
                 self.dragging_all = True
+                self.orig_points_before_drag = [QPointF(p.x(), p.y()) for p in self.points]
+                self.mouse_press_world_pos = world_pos
                 self.setCursor(Qt.SizeAllCursor)
                 return
 
@@ -445,6 +447,8 @@ class NGonCanvas(QWidget):
                 # Označenie segmentu na posunutie celej hrany
                 self.selected_segment_idx = self.hovered_segment_idx
                 self.dragging_segment_idx = self.hovered_segment_idx
+                self.orig_points_before_drag = [QPointF(p.x(), p.y()) for p in self.points]
+                self.mouse_press_world_pos = world_pos
                 self.selected_index = -1
                 self.selectionChanged.emit(-1)
             self.update()
@@ -544,11 +548,20 @@ class NGonCanvas(QWidget):
             return
         
         if self.dragging_all:
-            delta = world_pos - self.last_world_pos
-            for i in range(len(self.points)):
-                self.points[i] += delta
+            delta = world_pos - self.mouse_press_world_pos
             
-            self.last_world_pos = world_pos
+            if self.snap_x:
+                can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
+                step = 1.0 if can_show_sub_grid else 10.0
+                delta.setX(round(delta.x() / step) * step)
+            if self.snap_y:
+                can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
+                step = 1.0 if can_show_sub_grid else 10.0
+                delta.setY(round(delta.y() / step) * step)
+
+            for i in range(len(self.points)):
+                self.points[i] = self.orig_points_before_drag[i] + delta
+            
             self.pointsChanged.emit(self.points)
             self.update()
             return
@@ -560,17 +573,23 @@ class NGonCanvas(QWidget):
             return
 
         if self.dragging_segment_idx != -1:
-            delta = world_pos - self.last_world_pos
+            delta = world_pos - self.mouse_press_world_pos
+            
+            if self.snap_x:
+                can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
+                step = 1.0 if can_show_sub_grid else 10.0
+                delta.setX(round(delta.x() / step) * step)
+            if self.snap_y:
+                can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
+                step = 1.0 if can_show_sub_grid else 10.0
+                delta.setY(round(delta.y() / step) * step)
+
             idx1 = self.dragging_segment_idx
             idx2 = (idx1 + 1) % len(self.points)
             
-            self.points[idx1] += delta
-            self.points[idx2] += delta
+            self.points[idx1] = self.orig_points_before_drag[idx1] + delta
+            self.points[idx2] = self.orig_points_before_drag[idx2] + delta
             
-            self.points[idx1] = self.apply_snap(self.points[idx1])
-            self.points[idx2] = self.apply_snap(self.points[idx2])
-            
-            self.last_world_pos = world_pos
             self.pointsChanged.emit(self.points)
             self.update()
             return
