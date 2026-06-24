@@ -1,1 +1,0 @@
-python -m PyInstaller --onefile --noconsole --name "NGon Editor" --icon "icon.ico" app.py
