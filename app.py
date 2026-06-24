@@ -304,7 +304,11 @@ class NGonCanvas(QWidget):
             "L": QPointF(tl.x(), mid_y),  # Vľavo
             "R": QPointF(br.x(), mid_y),  # Vpravo
             "T": QPointF(mid_x, tl.y()),  # Hore
-            "B": QPointF(mid_x, br.y())   # Dole
+            "B": QPointF(mid_x, br.y()),  # Dole
+            "TL": QPointF(tl.x(), tl.y()), # Vľavo Hore
+            "TR": QPointF(br.x(), tl.y()), # Vpravo Hore
+            "BL": QPointF(tl.x(), br.y()), # Vľavo Dole
+            "BR": QPointF(br.x(), br.y())  # Vpravo Dole
         }
         
         # 4. Vykreslenie štvorčekov pre handles
@@ -520,6 +524,42 @@ class NGonCanvas(QWidget):
                 if abs(new_height) < 0.01: new_height = 0.01
                 scale_factor_y = new_height / bbox.height()
 
+            elif self.dragging_handle == "TL":
+                anchor = QPointF(bbox.right(), bbox.bottom())
+                new_width = bbox.width() - delta_mouse.x()
+                new_height = bbox.height() - delta_mouse.y()
+                if abs(new_width) < 0.01: new_width = 0.01
+                if abs(new_height) < 0.01: new_height = 0.01
+                scale_factor_x = new_width / bbox.width()
+                scale_factor_y = new_height / bbox.height()
+
+            elif self.dragging_handle == "TR":
+                anchor = QPointF(bbox.left(), bbox.bottom())
+                new_width = bbox.width() + delta_mouse.x()
+                new_height = bbox.height() - delta_mouse.y()
+                if abs(new_width) < 0.01: new_width = 0.01
+                if abs(new_height) < 0.01: new_height = 0.01
+                scale_factor_x = new_width / bbox.width()
+                scale_factor_y = new_height / bbox.height()
+
+            elif self.dragging_handle == "BL":
+                anchor = QPointF(bbox.right(), bbox.top())
+                new_width = bbox.width() - delta_mouse.x()
+                new_height = bbox.height() + delta_mouse.y()
+                if abs(new_width) < 0.01: new_width = 0.01
+                if abs(new_height) < 0.01: new_height = 0.01
+                scale_factor_x = new_width / bbox.width()
+                scale_factor_y = new_height / bbox.height()
+
+            elif self.dragging_handle == "BR":
+                anchor = QPointF(bbox.left(), bbox.top())
+                new_width = bbox.width() + delta_mouse.x()
+                new_height = bbox.height() + delta_mouse.y()
+                if abs(new_width) < 0.01: new_width = 0.01
+                if abs(new_height) < 0.01: new_height = 0.01
+                scale_factor_x = new_width / bbox.width()
+                scale_factor_y = new_height / bbox.height()
+
             # Plynulá aplikácia transformácie z originálnych bodov
             for i, orig_pt in enumerate(self.orig_points_before_scale):
                 dx = orig_pt.x() - anchor.x()
@@ -608,8 +648,12 @@ class NGonCanvas(QWidget):
             if hover_handle:
                 if hover_handle in ["L", "R"]:
                     self.setCursor(Qt.SizeHorCursor)
-                else:
+                elif hover_handle in ["T", "B"]:
                     self.setCursor(Qt.SizeVerCursor)
+                elif hover_handle in ["TL", "BR"]:
+                    self.setCursor(Qt.SizeFDiagCursor)
+                elif hover_handle in ["TR", "BL"]:
+                    self.setCursor(Qt.SizeBDiagCursor)
             else:
                 self.setCursor(Qt.ArrowCursor)
             return  # V Scale móde už nepokračujeme na detekciu bodov n-uholníka
@@ -617,14 +661,6 @@ class NGonCanvas(QWidget):
         self.hovered_point_idx = -1
         self.hovered_segment_idx = -1
 
-        # Zmena kurzora, ak sme nad nejakým handle v Scale režime
-        if self.scale_mode_active and not self.is_panning and self.dragging_handle is None:
-            for name, handle_screen_pt in self.scale_handles.items():
-                if (handle_screen_pt - event.position()).manhattanLength() < 10:
-                    if name in ["L", "R"]: self.setCursor(Qt.SizeHorCursor)
-                    else: self.setCursor(Qt.SizeVerCursor)
-                    return
-        
         # Kontrola prechodu myši nad bodmi
         for i, pt in enumerate(self.points):
             dist = (self.to_screen(pt) - event.position()).manhattanLength()
@@ -900,10 +936,18 @@ class MainWindow(QMainWindow):
             QPushButton { background-color: #006064; color: white; font-weight: bold; border-radius: 4px; padding: 3px; }
             QPushButton:hover { background-color: #00838f; }
         """)
+        
+        self.btn_snap_all_ten = QPushButton("Prichytiť na celé desiatky")
+        self.btn_snap_all_ten.setStyleSheet("""
+            QPushButton { background-color: #006064; color: white; font-weight: bold; border-radius: 4px; padding: 3px; }
+            QPushButton:hover { background-color: #00838f; }
+        """)
+        
         snap_layout.addWidget(self.check_snap_x, 0, 0)
         snap_layout.addWidget(self.check_snap_y, 0, 1)
         snap_layout.addWidget(self.check_snap_both, 1, 0, 1, 2)
         snap_layout.addWidget(self.btn_snap_all_int, 2, 0, 1, 2)
+        snap_layout.addWidget(self.btn_snap_all_ten, 3, 0, 1, 2)
         right_layout.addWidget(snap_group)
 
         # Bezpečná zóna
@@ -1014,6 +1058,7 @@ class MainWindow(QMainWindow):
         self.check_snap_y.stateChanged.connect(self.update_canvas_settings)
         self.check_snap_both.stateChanged.connect(self.toggle_both_snap)
         self.btn_snap_all_int.clicked.connect(self.snap_all_points_to_integer)
+        self.btn_snap_all_ten.clicked.connect(self.snap_all_points_to_ten)
 
         # Bezpečná zóna
         self.chk_safe_enable.stateChanged.connect(self.update_canvas_settings)
@@ -1140,6 +1185,18 @@ class MainWindow(QMainWindow):
             self.canvas.points[i] = QPointF(round(pt.x()), round(pt.y()))
             
         # Oznámime aplikácii zmenu, aby sa prekreslilo plátno a aktualizoval Outliner/JSON
+        self.canvas.pointsChanged.emit(self.canvas.points)
+        self.canvas.update()
+
+    def snap_all_points_to_ten(self):
+        """Zaokrúhli súradnice všetkých bodov na najbližšie celé desiatky."""
+        if not self.canvas.points:
+            return
+            
+        for i in range(len(self.canvas.points)):
+            pt = self.canvas.points[i]
+            self.canvas.points[i] = QPointF(round(pt.x() / 10.0) * 10.0, round(pt.y() / 10.0) * 10.0)
+            
         self.canvas.pointsChanged.emit(self.canvas.points)
         self.canvas.update()
 
