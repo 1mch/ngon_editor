@@ -2,6 +2,7 @@ import re
 import json
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from PySide6.QtCore import QPointF
+from translations import tr
 
 def save_ngon_to_js(parent, all_ngons, filepath=None):
     """
@@ -14,15 +15,15 @@ def save_ngon_to_js(parent, all_ngons, filepath=None):
     # Overíme, či aspoň jeden n-uholník obsahuje nejaké body
     has_points = any(len(ngon) > 0 for ngon in all_ngons) if all_ngons else False
     if not has_points:
-        QMessageBox.warning(parent, "Upozornenie", "Nie je čo uložiť. Žiadny n-uholník neobsahuje body.")
+        QMessageBox.warning(parent, tr("msg_warn_title"), tr("msg_warn_no_points"))
         return False
 
     if not filepath:
         filepath, _ = QFileDialog.getSaveFileName(
             parent,
-            "Uložiť JavaScript výstup",
+            tr("msg_save_dialog"),
             "",
-            "JavaScript súbory (*.js);;Všetky súbory (*)"
+            tr("msg_file_filter")
         )
     
     if not filepath:
@@ -41,10 +42,10 @@ def save_ngon_to_js(parent, all_ngons, filepath=None):
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(js_content)
             
-        QMessageBox.information(parent, "Úspech", f"Všetky tvary boli úspešne uložené do:\n{filepath}")
+        QMessageBox.information(parent, tr("msg_success_title"), tr("msg_success_save", filepath=filepath))
         return True
     except Exception as e:
-        QMessageBox.critical(parent, "Chyba", f"Nepodarilo sa uložiť súbor:\n{str(e)}")
+        QMessageBox.critical(parent, tr("msg_err_title"), tr("msg_err_save", e=str(e)))
         return False
 
 def import_ngon_from_js(parent):
@@ -54,9 +55,9 @@ def import_ngon_from_js(parent):
     """
     filepath, _ = QFileDialog.getOpenFileName(
         parent,
-        "Importovať n-uholníky z JavaScriptu",
+        tr("msg_import_dialog"),
         "",
-        "JavaScript súbory (*.js);;Všetky súbory (*)"
+        tr("msg_file_filter")
     )
 
     if not filepath:
@@ -111,5 +112,5 @@ def import_ngon_from_js(parent):
         return all_ngons
 
     except Exception as e:
-        QMessageBox.critical(parent, "Chyba pri importe", f"Nepodarilo sa načítať tvary zo súboru:\n{str(e)}")
+        QMessageBox.critical(parent, tr("msg_err_title"), tr("msg_err_import", e=str(e)))
         return None
