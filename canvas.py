@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient, QPolygonF, QWheelEvent, QMouseEvent, QKeyEvent
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient, QPolygonF, QWheelEvent, QMouseEvent, QKeyEvent, QImage
 import math
+import copy
 
 class NGonCanvas(QWidget):
     pointsChanged = Signal(list)
@@ -23,7 +24,10 @@ class NGonCanvas(QWidget):
         # Body n-uholníka
         self.ngons = [[]]  # Začíname s jedným prázdnym n-uholníkom
         self.active_ngon_idx = 0  # Index n-uholníka, s ktorým práve pracujeme
-        self.selected_index = -1
+        self.selected_indices = set()
+        self.selection_rect = QRectF() # Pre marquee selection
+        self.is_marquee_selecting = False
+        self.marquee_start_pos = QPointF()
         
         # Transformácia a posun zobrazenia
         self.pan_offset = QPointF(0, 0)
@@ -72,6 +76,59 @@ class NGonCanvas(QWidget):
         self.rotate_center = QPointF()
         self.start_angle = 0.0
         self.current_rotation_angle = 0.0
+
+        # --- UNDO / REDO ---
+        self.undo_stack = []
+        self.redo_stack = []
+
+        # --- REFERENČNÝ OBRÁZOK ---
+        self.bg_image = None
+        self.bg_opacity = 0.5
+        self.bg_scale = 1.0
+        self.bg_offset = QPointF(0, 0)
+        
+    def push_history(self):
+        current_state = {
+            'ngons': [[QPointF(p.x(), p.y()) for p in ngon] for ngon in self.ngons],
+            'active_idx': self.active_ngon_idx,
+            'selected_indices': set(self.selected_indices)
+        }
+        self.undo_stack.append(current_state)
+        if len(self.undo_stack) > 50:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+
+    def undo(self):
+        if not self.undo_stack: return
+        current_state = {
+            'ngons': [[QPointF(p.x(), p.y()) for p in ngon] for ngon in self.ngons],
+            'active_idx': self.active_ngon_idx,
+            'selected_indices': set(self.selected_indices)
+        }
+        self.redo_stack.append(current_state)
+        state = self.undo_stack.pop()
+        self.ngons = [[QPointF(p.x(), p.y()) for p in ngon] for ngon in state['ngons']]
+        self.active_ngon_idx = state['active_idx']
+        self.selected_indices = set(state['selected_indices'])
+        self.pointsChanged.emit(self.points)
+        self.selectionChanged.emit(-1)
+        self.update()
+
+    def redo(self):
+        if not self.redo_stack: return
+        current_state = {
+            'ngons': [[QPointF(p.x(), p.y()) for p in ngon] for ngon in self.ngons],
+            'active_idx': self.active_ngon_idx,
+            'selected_indices': set(self.selected_indices)
+        }
+        self.undo_stack.append(current_state)
+        state = self.redo_stack.pop()
+        self.ngons = [[QPointF(p.x(), p.y()) for p in ngon] for ngon in state['ngons']]
+        self.active_ngon_idx = state['active_idx']
+        self.selected_indices = set(state['selected_indices'])
+        self.pointsChanged.emit(self.points)
+        self.selectionChanged.emit(-1)
+        self.update()
 
     @property
     def points(self):
@@ -134,6 +191,14 @@ class NGonCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(25, 25, 25))
 
+        if self.bg_image:
+            painter.setOpacity(self.bg_opacity)
+            world_rect = QRectF(self.bg_offset.x(), self.bg_offset.y(), self.bg_image.width() * self.bg_scale, self.bg_image.height() * self.bg_scale)
+            tl = self.to_screen(world_rect.topLeft())
+            br = self.to_screen(world_rect.bottomRight())
+            painter.drawImage(QRectF(tl, br), self.bg_image)
+            painter.setOpacity(1.0)
+
         if self.preview_mode:
             # Prejdeme cyklom cez úplne všetky n-uholníky v zozname self.ngons
             for points in self.ngons:
@@ -195,7 +260,7 @@ class NGonCanvas(QWidget):
             for i, pt in enumerate(points):
                 screen_pt = self.to_screen(pt)
                 
-                if is_active_ngon and i == self.selected_index:
+                if is_active_ngon and i in self.selected_indices:
                     color = QColor(255, 140, 0)
                     size = 5
                 elif is_active_ngon and i == self.hovered_point_idx:
@@ -211,6 +276,12 @@ class NGonCanvas(QWidget):
                 painter.setBrush(QBrush(color))
                 painter.setPen(QPen(QColor(0, 0, 0), 1) if size > 4 else Qt.NoPen)
                 painter.drawEllipse(screen_pt, size, size)
+
+        # Vykreslenie Marquee selection boxu
+        if self.is_marquee_selecting:
+            painter.setPen(QPen(QColor(0, 150, 255), 1, Qt.DashLine))
+            painter.setBrush(QBrush(QColor(0, 150, 255, 40)))
+            painter.drawRect(self.selection_rect)
 
         # Vykreslenie transformačného obdĺžnika pre Scale Tool
         if self.scale_mode_active and len(self.points) > 1:
@@ -230,7 +301,7 @@ class NGonCanvas(QWidget):
                 rect.translate(screen_pt.x() + 10, screen_pt.y() - 10) # Posun vedľa bodu
 
                 # Rozhodnutie o farbách na základe výberu
-                is_selected = (i == self.selected_index)
+                is_selected = (i in self.selected_indices)
                 bg_color = QColor(255, 140, 0) if is_selected else QColor(255, 255, 255, 220)
                 text_color = QColor(255, 255, 255) if is_selected else QColor(0, 0, 0)
 
@@ -264,10 +335,13 @@ class NGonCanvas(QWidget):
         # Ak práve ťaháme, vizuálny box odvodíme z aktuálnych krajných bodov, 
         # ale ak neťaháme, prepočítame ho nanovo.
         if not self.dragging_handle:
-            min_x = min(p.x() for p in self.points)
-            max_x = max(p.x() for p in self.points)
-            min_y = min(p.y() for p in self.points)
-            max_y = max(p.y() for p in self.points)
+            points_to_scale = [p for i, p in enumerate(self.points) if i in self.selected_indices] if len(self.selected_indices) > 1 else self.points
+            if not points_to_scale:
+                return
+            min_x = min(p.x() for p in points_to_scale)
+            max_x = max(p.x() for p in points_to_scale)
+            min_y = min(p.y() for p in points_to_scale)
+            max_y = max(p.y() for p in points_to_scale)
             self.scale_bbox = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
             
         bbox = self.scale_bbox
@@ -391,10 +465,11 @@ class NGonCanvas(QWidget):
             self.is_rotating = True
             self.orig_points_before_rotate = [QPointF(p.x(), p.y()) for p in self.points]
             
-            min_x = min(p.x() for p in self.points)
-            max_x = max(p.x() for p in self.points)
-            min_y = min(p.y() for p in self.points)
-            max_y = max(p.y() for p in self.points)
+            points_to_rotate = [p for i, p in enumerate(self.points) if i in self.selected_indices] if len(self.selected_indices) > 1 else self.points
+            min_x = min(p.x() for p in points_to_rotate)
+            max_x = max(p.x() for p in points_to_rotate)
+            min_y = min(p.y() for p in points_to_rotate)
+            max_y = max(p.y() for p in points_to_rotate)
             self.rotate_center = QPointF((min_x + max_x) / 2, (min_y + max_y) / 2)
             
             self.start_angle = math.degrees(math.atan2(world_pos.y() - self.rotate_center.y(), world_pos.x() - self.rotate_center.x()))
@@ -430,48 +505,73 @@ class NGonCanvas(QWidget):
                 break
         
         if hit_index != -1:
-            self.selected_index = hit_index
+            self.push_history()
+            if event.modifiers() & Qt.ControlModifier:
+                if hit_index in self.selected_indices:
+                    self.selected_indices.remove(hit_index)
+                else:
+                    self.selected_indices.add(hit_index)
+            else:
+                if hit_index not in self.selected_indices:
+                    self.selected_indices.clear()
+                    self.selected_indices.add(hit_index)
+                    
             self.dragging_point_idx = hit_index
             self.selected_segment_idx = -1
-            self.selectionChanged.emit(hit_index)
+            self.orig_points_before_drag = [QPointF(p.x(), p.y()) for p in self.points]
+            self.mouse_press_world_pos = world_pos
+            self.selectionChanged.emit(hit_index if len(self.selected_indices) == 1 else -1)
             self.update()
             return
 
         # 2. Kliknutie na segment (čiara)
         if self.hovered_segment_idx != -1:
+            self.push_history()
             if event.modifiers() & Qt.ControlModifier:
                 # Vloženie nového bodu do vybratej čiary
                 new_pt = self.apply_snap(world_pos)
                 self.points.insert(self.hovered_segment_idx + 1, new_pt)
-                self.selected_index = self.hovered_segment_idx + 1
+                self.selected_indices.clear()
+                self.selected_indices.add(self.hovered_segment_idx + 1)
                 self.selected_segment_idx = -1
                 self.pointsChanged.emit(self.points)
-                self.selectionChanged.emit(self.selected_index)
+                self.selectionChanged.emit(self.hovered_segment_idx + 1)
             else:
                 # Označenie segmentu na posunutie celej hrany
                 self.selected_segment_idx = self.hovered_segment_idx
                 self.dragging_segment_idx = self.hovered_segment_idx
                 self.orig_points_before_drag = [QPointF(p.x(), p.y()) for p in self.points]
                 self.mouse_press_world_pos = world_pos
-                self.selected_index = -1
+                self.selected_indices.clear()
                 self.selectionChanged.emit(-1)
             self.update()
             return
 
         # 3. Pridanie nového bodu na koniec (len s Ctrl)
         if event.modifiers() & Qt.ControlModifier:
+            self.push_history()
             new_pt = self.apply_snap(world_pos)
             self.points.append(new_pt)
-            self.selected_index = len(self.points) - 1
+            self.selected_indices.clear()
+            self.selected_indices.add(len(self.points) - 1)
             self.selected_segment_idx = -1
             self.pointsChanged.emit(self.points)
-            self.selectionChanged.emit(self.selected_index)
-        else:
-            self.selected_index = -1
+            self.selectionChanged.emit(len(self.points) - 1)
+            self.update()
+            return
+            
+        # 4. Klik do prázdna (Marquee selection)
+        if event.button() == Qt.LeftButton:
+            if not (event.modifiers() & Qt.ControlModifier):
+                self.selected_indices.clear()
             self.selected_segment_idx = -1
             self.selectionChanged.emit(-1)
-        
-        self.update()
+            
+            self.is_marquee_selecting = True
+            self.marquee_start_pos = event.position()
+            self.selection_rect = QRectF(self.marquee_start_pos, self.marquee_start_pos)
+            self.update()
+            return
 
     def mouseMoveEvent(self, event: QMouseEvent):
         world_pos = self.to_world(event.position())
@@ -608,6 +708,11 @@ class NGonCanvas(QWidget):
             self.update()
             return
         
+        if self.is_marquee_selecting:
+            self.selection_rect = QRectF(self.marquee_start_pos, event.position()).normalized()
+            self.update()
+            return
+        
         if self.is_panning:
             delta = event.position() - self.last_mouse_pos
             scale = self.get_scale()
@@ -636,7 +741,19 @@ class NGonCanvas(QWidget):
             return
 
         if self.dragging_point_idx != -1:
-            self.points[self.dragging_point_idx] = self.apply_snap(world_pos)
+            delta = world_pos - self.mouse_press_world_pos
+            if self.snap_x:
+                can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
+                step = 1.0 if can_show_sub_grid else 10.0
+                delta.setX(round(delta.x() / step) * step)
+            if self.snap_y:
+                can_show_sub_grid = self.zoom_level > self.CONFIG["GRID_SUB_THRESHOLD"]
+                step = 1.0 if can_show_sub_grid else 10.0
+                delta.setY(round(delta.y() / step) * step)
+
+            for idx in self.selected_indices:
+                self.points[idx] = self.orig_points_before_drag[idx] + delta
+                
             self.pointsChanged.emit(self.points)
             self.update()
             return
@@ -711,6 +828,21 @@ class NGonCanvas(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if self.is_marquee_selecting:
+            self.is_marquee_selecting = False
+            
+            if not (event.modifiers() & Qt.ControlModifier):
+                self.selected_indices.clear()
+                
+            for i, pt in enumerate(self.points):
+                screen_pt = self.to_screen(pt)
+                if self.selection_rect.contains(screen_pt):
+                    self.selected_indices.add(i)
+                    
+            self.selectionChanged.emit(next(iter(self.selected_indices)) if len(self.selected_indices) == 1 else -1)
+            self.update()
+            return
+            
         self.is_panning = False
         self.dragging_point_idx = -1
         self.dragging_segment_idx = -1
@@ -774,16 +906,24 @@ class NGonCanvas(QWidget):
                 return  # Ukončíme spracovanie eventu
 
         # 2. Pôvodná logika pre zmazanie bodu
-        if event.key() == Qt.Key_Delete and self.selected_index != -1:
+        if event.key() == Qt.Key_Delete and self.selected_indices:
             self.delete_selected_point()
 
     def delete_selected_point(self):
-        if self.selected_index != -1 and 0 <= self.selected_index < len(self.points):
-            self.points.pop(self.selected_index)
-            self.selected_index = max(0, self.selected_index - 1) if self.points else -1
-            self.pointsChanged.emit(self.points)
-            self.selectionChanged.emit(self.selected_index)
-            self.update()
+        if not self.selected_indices:
+            return
+            
+        self.push_history()
+        
+        # Sort indices in reverse order so popping doesn't shift indices
+        for idx in sorted(self.selected_indices, reverse=True):
+            if 0 <= idx < len(self.points):
+                self.points.pop(idx)
+                
+        self.selected_indices.clear()
+        self.pointsChanged.emit(self.points)
+        self.selectionChanged.emit(-1)
+        self.update()
 
     def center_view(self, all_ngons=False):
         """Vypočíta ohraničujúci obdĺžnik bodov a upraví zoom a posun tak, aby bol tvar v strede."""
@@ -835,6 +975,8 @@ class NGonCanvas(QWidget):
         """Otočí aktívny n-uholník o špecifikovaný uhol v stupňoch."""
         if len(self.points) < 2:
             return
+            
+        self.push_history()
         
         min_x = min(p.x() for p in self.points)
         max_x = max(p.x() for p in self.points)
@@ -860,6 +1002,8 @@ class NGonCanvas(QWidget):
         """Preklopí aktívny n-uholník horizontálne alebo vertikálne."""
         if len(self.points) < 2:
             return
+            
+        self.push_history()
             
         min_x = min(p.x() for p in self.points)
         max_x = max(p.x() for p in self.points)

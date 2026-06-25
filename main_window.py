@@ -1,9 +1,9 @@
 import sys
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QListWidget, QCheckBox, QLabel, QGroupBox, QTextEdit, QDoubleSpinBox, QGridLayout, QComboBox, QPushButton, QToolBar, QSizePolicy, QDialog
+from PySide6.QtWidgets import QMainWindow, QFileDialog, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QListWidget, QCheckBox, QLabel, QGroupBox, QTextEdit, QDoubleSpinBox, QGridLayout, QComboBox, QPushButton, QToolBar, QSizePolicy, QDialog
 from PySide6.QtCore import Qt, QSize, QPointF
-from PySide6.QtGui import QIcon, QAction, QKeyEvent
+from PySide6.QtGui import QIcon, QAction, QKeyEvent, QImage
 from file_manager import save_ngon_to_js, import_ngon_from_js
-from dialogs import CoordinateDialog
+from dialogs import CoordinateDialog, SafeZoneDialog
 from canvas import NGonCanvas
 from translations import tr
 
@@ -58,10 +58,40 @@ class MainWindow(QMainWindow):
         file_menu = menubar.addMenu(tr("menu_file"))
         edit_menu = menubar.addMenu(tr("menu_edit"))
         
+        view_menu = menubar.addMenu("Zobrazenie")
+        self.act_safe_zone = QAction("Bezpečná zóna", self)
+        view_menu.addAction(self.act_safe_zone)
+        
+        snap_menu = menubar.addMenu(tr("group_snap") if hasattr(tr, '__call__') else "Prichytávanie")
+        self.act_snap_x = QAction(tr("snap_x"), self)
+        self.act_snap_x.setCheckable(True)
+        self.act_snap_y = QAction(tr("snap_y"), self)
+        self.act_snap_y.setCheckable(True)
+        self.act_snap_both = QAction(tr("snap_both"), self)
+        self.act_snap_both.setCheckable(True)
+        self.act_snap_int = QAction(tr("btn_snap_int"), self)
+        self.act_snap_ten = QAction(tr("btn_snap_ten"), self)
+        
+        snap_menu.addAction(self.act_snap_x)
+        snap_menu.addAction(self.act_snap_y)
+        snap_menu.addAction(self.act_snap_both)
+        snap_menu.addSeparator()
+        snap_menu.addAction(self.act_snap_int)
+        snap_menu.addAction(self.act_snap_ten)
+        
         self.act_rotate_90 = QAction(tr("act_rotate_90"), self)
         self.act_rotate_180 = QAction(tr("act_rotate_180"), self)
         self.act_flip_h = QAction(tr("act_flip_h"), self)
         self.act_flip_v = QAction(tr("act_flip_v"), self)
+        
+        self.act_undo = QAction(tr("act_undo"), self)
+        self.act_undo.setShortcut("Ctrl+Z")
+        self.act_redo = QAction(tr("act_redo"), self)
+        self.act_redo.setShortcut("Ctrl+Y")
+        
+        edit_menu.addAction(self.act_undo)
+        edit_menu.addAction(self.act_redo)
+        edit_menu.addSeparator()
         
         edit_menu.addAction(self.act_rotate_90)
         edit_menu.addAction(self.act_rotate_180)
@@ -84,8 +114,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.btn_import)
         file_menu.addAction(self.btn_save)
         
-        toolbar.addAction(self.btn_import)
-        toolbar.addAction(self.btn_save)
+        toolbar.addSeparator()
+        toolbar.addAction(self.act_undo)
+        toolbar.addAction(self.act_redo)
 
         toolbar.addSeparator()
 
@@ -166,47 +197,28 @@ class MainWindow(QMainWindow):
         right_layout.setSpacing(6)
         layout.addWidget(right_panel, stretch=1)
 
-        # Prichytávanie
-        snap_group = QGroupBox(tr("group_snap"))
-        snap_layout = QGridLayout(snap_group)
-        snap_layout.setSpacing(4)
-        self.check_snap_x = QCheckBox(tr("snap_x"))
-        self.check_snap_y = QCheckBox(tr("snap_y"))
-        self.check_snap_both = QCheckBox(tr("snap_both"))
-        self.btn_snap_all_int = QPushButton(tr("btn_snap_int"))
-        self.btn_snap_all_int.setStyleSheet("""
-            QPushButton { background-color: #006064; color: white; font-weight: bold; border-radius: 4px; padding: 3px; }
-            QPushButton:hover { background-color: #00838f; }
-        """)
+        # Referenčný obrázok (Pozadie)
+        bg_group = QGroupBox(tr("group_bg"))
+        bg_layout = QGridLayout(bg_group)
+        bg_layout.setSpacing(3)
+        self.btn_load_bg = QPushButton(tr("btn_load_bg"))
+        self.btn_clear_bg = QPushButton(tr("btn_clear_bg"))
+        self.spn_bg_opacity = QDoubleSpinBox()
+        self.spn_bg_opacity.setRange(0.0, 1.0)
+        self.spn_bg_opacity.setValue(0.5)
+        self.spn_bg_opacity.setSingleStep(0.1)
+        self.spn_bg_scale = QDoubleSpinBox()
+        self.spn_bg_scale.setRange(0.01, 100.0)
+        self.spn_bg_scale.setValue(1.0)
+        self.spn_bg_scale.setSingleStep(0.1)
         
-        self.btn_snap_all_ten = QPushButton(tr("btn_snap_ten"))
-        self.btn_snap_all_ten.setStyleSheet("""
-            QPushButton { background-color: #006064; color: white; font-weight: bold; border-radius: 4px; padding: 3px; }
-            QPushButton:hover { background-color: #00838f; }
-        """)
-        
-        snap_layout.addWidget(self.check_snap_x, 0, 0)
-        snap_layout.addWidget(self.check_snap_y, 0, 1)
-        snap_layout.addWidget(self.check_snap_both, 1, 0, 1, 2)
-        snap_layout.addWidget(self.btn_snap_all_int, 2, 0, 1, 2)
-        snap_layout.addWidget(self.btn_snap_all_ten, 3, 0, 1, 2)
-        right_layout.addWidget(snap_group)
-
-        # Bezpečná zóna
-        safe_group = QGroupBox(tr("group_safe"))
-        safe_layout = QGridLayout(safe_group)
-        safe_layout.setSpacing(3)
-        self.chk_safe_enable = QCheckBox(tr("chk_safe_enable"))
-        self.spn_l = QDoubleSpinBox(); self.spn_l.setRange(-1000, 1000); self.spn_l.setValue(-175)
-        self.spn_r = QDoubleSpinBox(); self.spn_r.setRange(-1000, 1000); self.spn_r.setValue(175)
-        self.spn_u = QDoubleSpinBox(); self.spn_u.setRange(-1000, 1000); self.spn_u.setValue(-50)
-        self.spn_d = QDoubleSpinBox(); self.spn_d.setRange(-1000, 1000); self.spn_d.setValue(0)
-        safe_layout.addWidget(self.chk_safe_enable, 0, 0, 1, 2)
-        safe_layout.addWidget(QLabel("L:"), 1, 0); safe_layout.addWidget(self.spn_l, 1, 1)
-        safe_layout.addWidget(QLabel("R:"), 2, 0); safe_layout.addWidget(self.spn_r, 2, 1)
-        safe_layout.addWidget(QLabel("U:"), 3, 0); safe_layout.addWidget(self.spn_u, 3, 1)
-        safe_layout.addWidget(QLabel("D:"), 4, 0); safe_layout.addWidget(self.spn_d, 4, 1)
-        right_layout.addWidget(safe_group)
+        bg_layout.addWidget(self.btn_load_bg, 0, 0, 1, 2)
+        bg_layout.addWidget(self.btn_clear_bg, 1, 0, 1, 2)
+        bg_layout.addWidget(QLabel(tr("bg_opacity")), 2, 0)
+        bg_layout.addWidget(self.spn_bg_opacity, 2, 1)
+        bg_layout.addWidget(QLabel(tr("bg_scale")), 3, 0)
+        bg_layout.addWidget(self.spn_bg_scale, 3, 1)
+        right_layout.addWidget(bg_group)
 
         # Správa tvarov
         ngon_manage_group = QGroupBox(tr("group_ngon_manage"))
@@ -297,26 +309,30 @@ class MainWindow(QMainWindow):
         self.act_preview.triggered.connect(self.enable_preview)
         
         # Menu - akcie
+        self.act_undo.triggered.connect(self.canvas.undo)
+        self.act_redo.triggered.connect(self.canvas.redo)
         self.act_rotate_90.triggered.connect(lambda: self.canvas.rotate_ngon(90))
         self.act_rotate_180.triggered.connect(lambda: self.canvas.rotate_ngon(180))
         self.act_flip_h.triggered.connect(lambda: self.canvas.flip_ngon(horizontal=True, vertical=False))
         self.act_flip_v.triggered.connect(lambda: self.canvas.flip_ngon(horizontal=False, vertical=True))
 
         # Prichytávanie
-        self.check_snap_x.stateChanged.connect(self.update_canvas_settings)
-        self.check_snap_y.stateChanged.connect(self.update_canvas_settings)
-        self.check_snap_both.stateChanged.connect(self.toggle_both_snap)
-        self.btn_snap_all_int.clicked.connect(self.snap_all_points_to_integer)
-        self.btn_snap_all_ten.clicked.connect(self.snap_all_points_to_ten)
+        self.act_snap_x.toggled.connect(self.update_canvas_settings)
+        self.act_snap_y.toggled.connect(self.update_canvas_settings)
+        self.act_snap_both.toggled.connect(self.toggle_both_snap)
+        self.act_snap_int.triggered.connect(self.snap_all_points_to_integer)
+        self.act_snap_ten.triggered.connect(self.snap_all_points_to_ten)
 
         # Bezpečná zóna
-        self.chk_safe_enable.stateChanged.connect(self.update_canvas_settings)
-        for s in [self.spn_l, self.spn_r, self.spn_u, self.spn_d]:
-            s.valueChanged.connect(self.update_canvas_settings)
+        self.act_safe_zone.triggered.connect(self.open_safe_zone_dialog)
 
-        # Správa tvarov
+                # Správa tvarov
         self.btn_add_ngon.clicked.connect(self.action_add_new_ngon)
         self.btn_delete_ngon.clicked.connect(self.action_delete_current_ngon)
+        self.btn_load_bg.clicked.connect(self.load_background_image)
+        self.btn_clear_bg.clicked.connect(self.clear_background_image)
+        self.spn_bg_opacity.valueChanged.connect(self.update_background_settings)
+        self.spn_bg_scale.valueChanged.connect(self.update_background_settings)
         self.ngon_list_combo.currentIndexChanged.connect(self.action_change_active_ngon)
 
     # ── Sync helpery pre toolbar toggle akcie ────────────────────────────────
@@ -344,7 +360,7 @@ class MainWindow(QMainWindow):
         self.ngon_list_combo.blockSignals(False)
         
         self.canvas.active_ngon_idx = new_idx
-        self.canvas.selected_index = -1
+        self.canvas.selected_indices.clear()
         self.canvas.selected_segment_idx = -1
         self.update_ui([])
         self.canvas.update()
@@ -354,7 +370,7 @@ class MainWindow(QMainWindow):
         if len(self.canvas.ngons) <= 1:
             # Ak je posledný, iba ho vyčistíme
             self.canvas.ngons[0] = []
-            self.canvas.selected_index = -1
+            self.canvas.selected_indices.clear()
             self.canvas.pointsChanged.emit([])
             self.canvas.update()
             return
@@ -373,7 +389,7 @@ class MainWindow(QMainWindow):
         self.ngon_list_combo.setCurrentIndex(self.canvas.active_ngon_idx)
         self.ngon_list_combo.blockSignals(False)
         
-        self.canvas.selected_index = -1
+        self.canvas.selected_indices.clear()
         self.canvas.selected_segment_idx = -1
         self.canvas.pointsChanged.emit(self.canvas.points)
         self.canvas.update()
@@ -382,7 +398,7 @@ class MainWindow(QMainWindow):
         """Prepne aktívny n-uholník podľa výberu v menu."""
         if 0 <= index < len(self.canvas.ngons):
             self.canvas.active_ngon_idx = index
-            self.canvas.selected_index = -1
+            self.canvas.selected_indices.clear()
             self.canvas.selected_segment_idx = -1
             # Vyvoláme aktualizáciu UI pre novo zvolený n-uholník
             self.update_ui(self.canvas.points)
@@ -408,7 +424,7 @@ class MainWindow(QMainWindow):
             
             # Prepne index na prvý n-uholník
             self.canvas.active_ngon_idx = 0
-            self.canvas.selected_index = -1
+            self.canvas.selected_indices.clear()
             self.canvas.selected_segment_idx = -1
             
             # Aktualizujeme rozbaľovacie menu (ComboBox) podľa počtu načítaných tvarov
@@ -429,6 +445,8 @@ class MainWindow(QMainWindow):
         if not self.canvas.points:
             return
             
+        self.canvas.push_history()
+        self.canvas.push_history()
         for i in range(len(self.canvas.points)):
             pt = self.canvas.points[i]
             self.canvas.points[i] = QPointF(round(pt.x()), round(pt.y()))
@@ -442,6 +460,8 @@ class MainWindow(QMainWindow):
         if not self.canvas.points:
             return
             
+        self.canvas.push_history()
+        self.canvas.push_history()
         for i in range(len(self.canvas.points)):
             pt = self.canvas.points[i]
             self.canvas.points[i] = QPointF(round(pt.x() / 10.0) * 10.0, round(pt.y() / 10.0) * 10.0)
@@ -468,6 +488,7 @@ class MainWindow(QMainWindow):
         if len(points) < 3:
             return
             
+        self.canvas.push_history()
         smoothed_points = []
         n = len(points)
         
@@ -487,7 +508,7 @@ class MainWindow(QMainWindow):
         self.canvas.points = smoothed_points
         
         # Zrušíme aktuálny výber, keďže staré indexy bodov už neexistujú
-        self.canvas.selected_index = -1
+        self.canvas.selected_indices.clear()
         self.canvas.selected_segment_idx = -1
         
         # Oznámime aplikácii zmenu (prekreslí sa Outliner a JSON)
@@ -499,16 +520,11 @@ class MainWindow(QMainWindow):
         self.canvas.show_grid = self.chk_grid_master.isChecked()
         self.canvas.show_axes = self.chk_axes.isChecked()
         
-        self.canvas.snap_x = self.check_snap_x.isChecked()
-        self.canvas.snap_y = self.check_snap_y.isChecked()
+        self.canvas.snap_x = self.act_snap_x.isChecked()
+        self.canvas.snap_y = self.act_snap_y.isChecked()
 
         self.canvas.show_coords = self.chk_coords.isChecked()
         
-        self.canvas.safe_enabled = self.chk_safe_enable.isChecked()
-        self.canvas.safe_l = self.spn_l.value()
-        self.canvas.safe_r = self.spn_r.value()
-        self.canvas.safe_u = self.spn_u.value()
-        self.canvas.safe_d = self.spn_d.value()
         self.canvas.update()
 
     def enable_preview(self):
@@ -521,18 +537,16 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentIndex(0)  # Prepnúť na plátno, ak sme v JSONe
             self.canvas.update()
 
-    def toggle_both_snap(self, state):
-        # Správne ošetrenie CheckState pre verziu PySide6
-        is_checked = (state == Qt.CheckState.Checked.value or state == 2)
-        self.check_snap_x.setChecked(is_checked)
-        self.check_snap_y.setChecked(is_checked)
+    def toggle_both_snap(self, checked):
+        self.act_snap_x.setChecked(checked)
+        self.act_snap_y.setChecked(checked)
         self.update_canvas_settings()
 
     def open_coordinate_editor(self, index):
         """Otvorí okno pre manuálnu úpravu súradníc vybraného bodu."""
         if 0 <= index < len(self.canvas.points):
             # Synchronizácia výberu
-            self.canvas.selected_index = index
+            self.canvas.selected_indices = {index}
             self.sync_selection_to_ui(index)
             self.canvas.update()
 
@@ -540,12 +554,24 @@ class MainWindow(QMainWindow):
             dialog = CoordinateDialog(pt.x(), pt.y(), self)
             
             if dialog.exec() == QDialog.Accepted:
+                self.canvas.push_history()
                 new_x, new_y = dialog.get_values()
                 self.canvas.points[index] = QPointF(new_x, new_y)
                 
                 # Emitovanie signálu spustí update_ui a prekreslenie
                 self.canvas.pointsChanged.emit(self.canvas.points)
                 self.canvas.update()
+
+    def open_safe_zone_dialog(self):
+        dialog = SafeZoneDialog(self.canvas.safe_enabled, self.canvas.safe_l, self.canvas.safe_r, self.canvas.safe_u, self.canvas.safe_d, self)
+        if dialog.exec() == QDialog.Accepted:
+            enabled, l, r, u, d = dialog.get_values()
+            self.canvas.safe_enabled = enabled
+            self.canvas.safe_l = l
+            self.canvas.safe_r = r
+            self.canvas.safe_u = u
+            self.canvas.safe_d = d
+            self.canvas.update()
 
     def update_ui(self, points):
         self.outliner.blockSignals(True)
@@ -555,8 +581,8 @@ class MainWindow(QMainWindow):
         for i, pt in enumerate(points):
             self.outliner.addItem(tr("outliner_item", i=i, x=pt.x(), y=pt.y()))
         
-        if self.canvas.selected_index != -1:
-            self.outliner.setCurrentRow(self.canvas.selected_index)
+        if self.canvas.selected_indices:
+            self.outliner.setCurrentRow(next(iter(self.canvas.selected_indices)))
         self.outliner.blockSignals(False)
 
         # GENEROVANIE EXPORTU PRE VŠETKY N-UHOLNÍKY
@@ -575,7 +601,25 @@ class MainWindow(QMainWindow):
         self.outliner.blockSignals(False)
 
     def sync_selection_to_canvas(self, index):
-        self.canvas.selected_index = index
+        self.canvas.selected_indices = {index}
         self.canvas.selected_segment_idx = -1  # Výber v outlineri zruší označenie hrany (identické s kliknutím na bod)
+        self.canvas.update()
+
+
+    def load_background_image(self):
+        filepath, _ = QFileDialog.getOpenFileName(self, tr("btn_load_bg"), "", "Images (*.png *.jpg *.jpeg *.bmp)")
+        if filepath:
+            img = QImage(filepath)
+            if not img.isNull():
+                self.canvas.bg_image = img
+                self.update_background_settings()
+
+    def clear_background_image(self):
+        self.canvas.bg_image = None
+        self.canvas.update()
+
+    def update_background_settings(self):
+        self.canvas.bg_opacity = self.spn_bg_opacity.value()
+        self.canvas.bg_scale = self.spn_bg_scale.value()
         self.canvas.update()
 

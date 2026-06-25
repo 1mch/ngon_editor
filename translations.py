@@ -49,6 +49,14 @@ TEXTS = {
         "outliner_item": "Bod {i}: [{x:.1f}, {y:.1f}]",
         "ngon_name": "Tvar {i}",
         
+        "act_undo": "↶ Späť (Undo)",
+        "act_redo": "↷ Znova (Redo)",
+        "btn_load_bg": "Nahrať pozadie",
+        "btn_clear_bg": "Zmazať pozadie",
+        "group_bg": "Referenčný obrázok",
+        "bg_opacity": "Priehľadnosť:",
+        "bg_scale": "Mierka:",
+        
         # Dialogs
         "dialog_coord_title": "Upraviť súradnice bodu",
         "dialog_coord_x": "Súradnica X:",
@@ -114,6 +122,14 @@ TEXTS = {
         "label_outliner": "Points (Outliner):",
         "outliner_item": "Point {i}: [{x:.1f}, {y:.1f}]",
         "ngon_name": "Shape {i}",
+        
+        "act_undo": "↶ Undo",
+        "act_redo": "↷ Redo",
+        "btn_load_bg": "Load Background",
+        "btn_clear_bg": "Clear Background",
+        "group_bg": "Reference Image",
+        "bg_opacity": "Opacity:",
+        "bg_scale": "Scale:",
         
         # Dialogs
         "dialog_coord_title": "Edit Point Coordinates",

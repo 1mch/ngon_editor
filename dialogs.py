@@ -32,3 +32,46 @@ class CoordinateDialog(QDialog):
         """Vráti nastavené hodnoty X a Y."""
         return self.spn_x.value(), self.spn_y.value()
 
+
+class SafeZoneDialog(QDialog):
+    def __init__(self, enabled, l, r, u, d, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("group_safe") if hasattr(tr, '__call__') else "Bezpečná zóna")
+        self.setMinimumWidth(250)
+        
+        from PySide6.QtWidgets import QCheckBox
+        layout = QFormLayout(self)
+
+        self.chk_enable = QCheckBox(tr("chk_safe_enable") if hasattr(tr, '__call__') else "Zobraziť bezpečnú zónu")
+        self.chk_enable.setChecked(enabled)
+        layout.addRow(self.chk_enable)
+
+        self.spn_l = QDoubleSpinBox()
+        self.spn_l.setRange(-10000, 10000)
+        self.spn_l.setValue(l)
+        
+        self.spn_r = QDoubleSpinBox()
+        self.spn_r.setRange(-10000, 10000)
+        self.spn_r.setValue(r)
+        
+        self.spn_u = QDoubleSpinBox()
+        self.spn_u.setRange(-10000, 10000)
+        self.spn_u.setValue(u)
+        
+        self.spn_d = QDoubleSpinBox()
+        self.spn_d.setRange(-10000, 10000)
+        self.spn_d.setValue(d)
+
+        layout.addRow("L:", self.spn_l)
+        layout.addRow("R:", self.spn_r)
+        layout.addRow("U:", self.spn_u)
+        layout.addRow("D:", self.spn_d)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addRow(self.buttons)
+
+    def get_values(self):
+        return self.chk_enable.isChecked(), self.spn_l.value(), self.spn_r.value(), self.spn_u.value(), self.spn_d.value()
+
