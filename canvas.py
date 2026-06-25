@@ -1054,3 +1054,51 @@ class NGonCanvas(QWidget):
         self.pointsChanged.emit(self.points)
         self.update()
 
+    def fillet_selected_points(self, radius, segments):
+        """Nahradí vybrané ostré rohy zaoblenou Bezierovou krivkou."""
+        if not self.selected_indices or len(self.points) < 3:
+            return
+            
+        self.push_history()
+        
+        # Spracujeme od konca, aby sme nerozbili indexy pri vkladaní viacerých bodov
+        indices_to_process = sorted(list(self.selected_indices), reverse=True)
+        
+        for idx in indices_to_process:
+            pt_curr = self.points[idx]
+            pt_prev = self.points[idx - 1] # Využíva negatívny index pre posledný bod
+            pt_next = self.points[(idx + 1) % len(self.points)]
+            
+            v1_x = pt_prev.x() - pt_curr.x()
+            v1_y = pt_prev.y() - pt_curr.y()
+            v2_x = pt_next.x() - pt_curr.x()
+            v2_y = pt_next.y() - pt_curr.y()
+            
+            len1 = math.hypot(v1_x, v1_y)
+            len2 = math.hypot(v2_x, v2_y)
+            
+            if len1 == 0 or len2 == 0:
+                continue
+                
+            n1_x, n1_y = v1_x / len1, v1_y / len1
+            n2_x, n2_y = v2_x / len2, v2_y / len2
+            
+            # Limit polomeru, aby neprekročil polovicu dĺžky hrany
+            actual_radius = min(radius, len1 / 2.0, len2 / 2.0)
+            
+            p1 = QPointF(pt_curr.x() + n1_x * actual_radius, pt_curr.y() + n1_y * actual_radius)
+            p2 = QPointF(pt_curr.x() + n2_x * actual_radius, pt_curr.y() + n2_y * actual_radius)
+            
+            arc_points = []
+            for i in range(segments + 1):
+                t = i / segments
+                x = ((1 - t) ** 2) * p1.x() + 2 * (1 - t) * t * pt_curr.x() + (t ** 2) * p2.x()
+                y = ((1 - t) ** 2) * p1.y() + 2 * (1 - t) * t * pt_curr.y() + (t ** 2) * p2.y()
+                arc_points.append(QPointF(x, y))
+                
+            self.points = self.points[:idx] + arc_points + self.points[idx+1:]
+            
+        self.selected_indices.clear()
+        self.selected_segment_idx = -1
+        self.pointsChanged.emit(self.points)
+        self.update()

@@ -2,8 +2,8 @@ import sys
 from PySide6.QtWidgets import QMainWindow, QFileDialog, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QListWidget, QCheckBox, QLabel, QGroupBox, QTextEdit, QDoubleSpinBox, QGridLayout, QComboBox, QPushButton, QToolBar, QSizePolicy, QDialog
 from PySide6.QtCore import Qt, QSize, QPointF
 from PySide6.QtGui import QIcon, QAction, QKeyEvent, QImage
-from file_manager import save_ngon_to_js, import_ngon_from_js
-from dialogs import CoordinateDialog, SafeZoneDialog, BackgroundDialog
+from file_manager import save_ngon_to_js, import_ngon_from_js, save_project, load_project, export_ngon_to_svg
+from dialogs import CoordinateDialog, SafeZoneDialog, BackgroundDialog, FilletDialog
 from canvas import NGonCanvas
 from translations import tr
 
@@ -119,8 +119,17 @@ class MainWindow(QMainWindow):
         self.btn_save = QAction(tr("btn_save"), self)
         self.btn_save.setToolTip(tr("tooltip_save"))
         
+        self.btn_load_project = QAction("Načítať projekt...", self)
+        self.btn_save_project = QAction("Uložiť projekt...", self)
+        self.btn_export_svg = QAction("Exportovať do SVG...", self)
+        
         file_menu.addAction(self.btn_import)
         file_menu.addAction(self.btn_save)
+        file_menu.addSeparator()
+        file_menu.addAction(self.btn_load_project)
+        file_menu.addAction(self.btn_save_project)
+        file_menu.addSeparator()
+        file_menu.addAction(self.btn_export_svg)
         
         toolbar.addSeparator()
         toolbar.addAction(self.act_undo)
@@ -164,6 +173,9 @@ class MainWindow(QMainWindow):
 
         self.act_smooth = toolbar.addAction(tr("act_smooth"))
         self.act_smooth.setToolTip(tr("tooltip_smooth"))
+
+        self.act_fillet = toolbar.addAction("Zaobliť rohy")
+        self.act_fillet.setToolTip("Zaoblí vybrané rohy")
 
         self.act_center = toolbar.addAction(tr("act_center"))
         self.act_center.setToolTip(tr("tooltip_center"))
@@ -279,6 +291,9 @@ class MainWindow(QMainWindow):
         # Toolbar – súbor
         self.btn_save.triggered.connect(self.action_save_js)
         self.btn_import.triggered.connect(self.action_import_js)
+        self.btn_load_project.triggered.connect(self.action_load_project)
+        self.btn_save_project.triggered.connect(self.action_save_project)
+        self.btn_export_svg.triggered.connect(self.action_export_svg)
 
         # Toolbar – toggle zobrazenia
         self.act_axes.toggled.connect(self._sync_axes)
@@ -289,6 +304,7 @@ class MainWindow(QMainWindow):
         self.act_scale_tool.toggled.connect(self._sync_scale_tool)
         self.act_rotate_tool.toggled.connect(self._sync_rotate_tool)
         self.act_smooth.triggered.connect(self.smooth_all_points)
+        self.act_fillet.triggered.connect(self.action_fillet)
         self.act_center.triggered.connect(lambda: self.canvas.center_view(all_ngons=False))
         self.act_center_all.triggered.connect(lambda: self.canvas.center_view(all_ngons=True))
         self.act_preview.triggered.connect(self.enable_preview)
@@ -591,3 +607,73 @@ class MainWindow(QMainWindow):
         dialog = BackgroundDialog(self)
         dialog.exec()
 
+    def action_load_project(self):
+        project_data = load_project(self)
+        if project_data:
+            self.canvas.ngons = project_data["ngons"]
+            cd = project_data["canvas_data"]
+            self.canvas.bg_opacity = cd.get("bg_opacity", 0.5)
+            self.canvas.bg_width_auto = cd.get("bg_width_auto", True)
+            self.canvas.bg_width = cd.get("bg_width", 500.0)
+            self.canvas.bg_height_auto = cd.get("bg_height_auto", True)
+            self.canvas.bg_height = cd.get("bg_height", 500.0)
+            self.canvas.bg_center_x = cd.get("bg_center_x", True)
+            self.canvas.bg_center_y = cd.get("bg_center_y", True)
+            
+            if "bg_offset" in cd:
+                self.canvas.bg_offset = QPointF(cd["bg_offset"]["x"], cd["bg_offset"]["y"])
+                
+            self.canvas.safe_enabled = cd.get("safe_enabled", False)
+            self.canvas.safe_l = cd.get("safe_l", -175.0)
+            self.canvas.safe_r = cd.get("safe_r", 175.0)
+            self.canvas.safe_u = cd.get("safe_u", -50.0)
+            self.canvas.safe_d = cd.get("safe_d", 0.0)
+            
+            self.canvas.snap_x = cd.get("snap_x", False)
+            self.canvas.snap_y = cd.get("snap_y", False)
+            self.canvas.show_grid = cd.get("show_grid", True)
+            self.canvas.show_axes = cd.get("show_axes", True)
+            self.canvas.show_coords = cd.get("show_coords", False)
+            
+            if project_data["bg_image"]:
+                self.canvas.bg_image = project_data["bg_image"]
+                
+            # Update UI state
+            self.chk_axes.setChecked(self.canvas.show_axes)
+            self.chk_grid_master.setChecked(self.canvas.show_grid)
+            self.chk_coords.setChecked(self.canvas.show_coords)
+            self.act_snap_x.setChecked(self.canvas.snap_x)
+            self.act_snap_y.setChecked(self.canvas.snap_y)
+            
+            self.canvas.active_ngon_idx = 0
+            self.canvas.selected_indices.clear()
+            self.canvas.selected_segment_idx = -1
+            
+            self.ngon_list_combo.blockSignals(True)
+            self.ngon_list_combo.clear()
+            for i in range(len(self.canvas.ngons)):
+                self.ngon_list_combo.addItem(tr("ngon_name", i=i) if hasattr(tr, '__call__') else f"Tvar {i}")
+            self.ngon_list_combo.setCurrentIndex(0)
+            self.ngon_list_combo.blockSignals(False)
+            
+            self.update_canvas_settings()
+            self.update_ui(self.canvas.points)
+            self.canvas.center_view(all_ngons=True)
+            self.canvas.update()
+
+    def action_save_project(self):
+        save_project(self, self.canvas)
+        
+    def action_export_svg(self):
+        export_ngon_to_svg(self, self.canvas.ngons)
+        
+    def action_fillet(self):
+        if not self.canvas.selected_indices:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Informácia", "Vyberte aspoň jeden bod na zaoblenie (Klik na bod).")
+            return
+            
+        dialog = FilletDialog(self)
+        if dialog.exec():
+            radius, segments = dialog.get_values()
+            self.canvas.fillet_selected_points(radius, segments)

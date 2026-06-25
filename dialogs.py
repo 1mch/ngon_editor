@@ -181,3 +181,32 @@ class BackgroundDialog(QDialog):
         super().accept()
 
 
+class FilletDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dialog_fillet_title") if hasattr(tr, '__call__') else "Zaobliť rohy")
+        self.setMinimumWidth(250)
+        
+        layout = QFormLayout(self)
+        
+        self.spn_radius = QDoubleSpinBox()
+        self.spn_radius.setRange(0.1, 1000.0)
+        self.spn_radius.setValue(10.0)
+        self.spn_radius.setDecimals(1)
+        self.spn_radius.setSingleStep(1.0)
+        
+        self.spn_segments = QDoubleSpinBox()
+        self.spn_segments.setRange(2, 64)
+        self.spn_segments.setValue(5)
+        self.spn_segments.setDecimals(0)
+        
+        layout.addRow("Polomer (vzdialenosť):", self.spn_radius)
+        layout.addRow("Počet segmentov:", self.spn_segments)
+        
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addRow(self.buttons)
+
+    def get_values(self):
+        return self.spn_radius.value(), int(self.spn_segments.value())
