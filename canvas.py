@@ -84,7 +84,12 @@ class NGonCanvas(QWidget):
         # --- REFERENČNÝ OBRÁZOK ---
         self.bg_image = None
         self.bg_opacity = 0.5
-        self.bg_scale = 1.0
+        self.bg_width_auto = True
+        self.bg_width = 500.0
+        self.bg_height_auto = True
+        self.bg_height = 500.0
+        self.bg_center_x = True
+        self.bg_center_y = True
         self.bg_offset = QPointF(0, 0)
         
     def push_history(self):
@@ -193,7 +198,33 @@ class NGonCanvas(QWidget):
 
         if self.bg_image:
             painter.setOpacity(self.bg_opacity)
-            world_rect = QRectF(self.bg_offset.x(), self.bg_offset.y(), self.bg_image.width() * self.bg_scale, self.bg_image.height() * self.bg_scale)
+            
+            orig_w = self.bg_image.width()
+            orig_h = self.bg_image.height()
+            
+            if self.bg_width_auto and self.bg_height_auto:
+                w = orig_w
+                h = orig_h
+            elif self.bg_width_auto:
+                h = self.bg_height
+                w = orig_w * (h / orig_h) if orig_h != 0 else orig_w
+            elif self.bg_height_auto:
+                w = self.bg_width
+                h = orig_h * (w / orig_w) if orig_w != 0 else orig_h
+            else:
+                w = self.bg_width
+                h = self.bg_height
+                
+            x = self.bg_offset.x()
+            y = self.bg_offset.y()
+            
+            if self.bg_center_x:
+                x -= w / 2.0
+            if self.bg_center_y:
+                y -= h / 2.0
+                
+            world_rect = QRectF(x, y, w, h)
+            
             tl = self.to_screen(world_rect.topLeft())
             br = self.to_screen(world_rect.bottomRight())
             painter.drawImage(QRectF(tl, br), self.bg_image)

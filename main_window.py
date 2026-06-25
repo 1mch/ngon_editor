@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QMainWindow, QFileDialog, QWidget, QVBoxLayout, QH
 from PySide6.QtCore import Qt, QSize, QPointF
 from PySide6.QtGui import QIcon, QAction, QKeyEvent, QImage
 from file_manager import save_ngon_to_js, import_ngon_from_js
-from dialogs import CoordinateDialog, SafeZoneDialog
+from dialogs import CoordinateDialog, SafeZoneDialog, BackgroundDialog
 from canvas import NGonCanvas
 from translations import tr
 
@@ -61,6 +61,8 @@ class MainWindow(QMainWindow):
         view_menu = menubar.addMenu("Zobrazenie")
         self.act_safe_zone = QAction("Bezpečná zóna", self)
         view_menu.addAction(self.act_safe_zone)
+        self.act_bg_settings = QAction("Referenčný obrázok", self)
+        view_menu.addAction(self.act_bg_settings)
         
         snap_menu = menubar.addMenu(tr("group_snap") if hasattr(tr, '__call__') else "Prichytávanie")
         self.act_snap_x = QAction(tr("snap_x"), self)
@@ -197,29 +199,6 @@ class MainWindow(QMainWindow):
         right_layout.setSpacing(6)
         layout.addWidget(right_panel, stretch=1)
 
-        # Referenčný obrázok (Pozadie)
-        bg_group = QGroupBox(tr("group_bg"))
-        bg_layout = QGridLayout(bg_group)
-        bg_layout.setSpacing(3)
-        self.btn_load_bg = QPushButton(tr("btn_load_bg"))
-        self.btn_clear_bg = QPushButton(tr("btn_clear_bg"))
-        self.spn_bg_opacity = QDoubleSpinBox()
-        self.spn_bg_opacity.setRange(0.0, 1.0)
-        self.spn_bg_opacity.setValue(0.5)
-        self.spn_bg_opacity.setSingleStep(0.1)
-        self.spn_bg_scale = QDoubleSpinBox()
-        self.spn_bg_scale.setRange(0.01, 100.0)
-        self.spn_bg_scale.setValue(1.0)
-        self.spn_bg_scale.setSingleStep(0.1)
-        
-        bg_layout.addWidget(self.btn_load_bg, 0, 0, 1, 2)
-        bg_layout.addWidget(self.btn_clear_bg, 1, 0, 1, 2)
-        bg_layout.addWidget(QLabel(tr("bg_opacity")), 2, 0)
-        bg_layout.addWidget(self.spn_bg_opacity, 2, 1)
-        bg_layout.addWidget(QLabel(tr("bg_scale")), 3, 0)
-        bg_layout.addWidget(self.spn_bg_scale, 3, 1)
-        right_layout.addWidget(bg_group)
-
         # Správa tvarov
         ngon_manage_group = QGroupBox(tr("group_ngon_manage"))
         ngon_manage_layout = QVBoxLayout(ngon_manage_group)
@@ -325,14 +304,11 @@ class MainWindow(QMainWindow):
 
         # Bezpečná zóna
         self.act_safe_zone.triggered.connect(self.open_safe_zone_dialog)
+        self.act_bg_settings.triggered.connect(self.open_background_dialog)
 
-                # Správa tvarov
+        # Správa tvarov
         self.btn_add_ngon.clicked.connect(self.action_add_new_ngon)
         self.btn_delete_ngon.clicked.connect(self.action_delete_current_ngon)
-        self.btn_load_bg.clicked.connect(self.load_background_image)
-        self.btn_clear_bg.clicked.connect(self.clear_background_image)
-        self.spn_bg_opacity.valueChanged.connect(self.update_background_settings)
-        self.spn_bg_scale.valueChanged.connect(self.update_background_settings)
         self.ngon_list_combo.currentIndexChanged.connect(self.action_change_active_ngon)
 
     # ── Sync helpery pre toolbar toggle akcie ────────────────────────────────
@@ -605,21 +581,7 @@ class MainWindow(QMainWindow):
         self.canvas.selected_segment_idx = -1  # Výber v outlineri zruší označenie hrany (identické s kliknutím na bod)
         self.canvas.update()
 
-
-    def load_background_image(self):
-        filepath, _ = QFileDialog.getOpenFileName(self, tr("btn_load_bg"), "", "Images (*.png *.jpg *.jpeg *.bmp)")
-        if filepath:
-            img = QImage(filepath)
-            if not img.isNull():
-                self.canvas.bg_image = img
-                self.update_background_settings()
-
-    def clear_background_image(self):
-        self.canvas.bg_image = None
-        self.canvas.update()
-
-    def update_background_settings(self):
-        self.canvas.bg_opacity = self.spn_bg_opacity.value()
-        self.canvas.bg_scale = self.spn_bg_scale.value()
-        self.canvas.update()
+    def open_background_dialog(self):
+        dialog = BackgroundDialog(self)
+        dialog.exec()
 
