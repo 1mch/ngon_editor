@@ -56,15 +56,21 @@ class MainWindow(QMainWindow):
         # ── MENU BAR ─────────────────────────────────────────────────────────
         menubar = self.menuBar()
         file_menu = menubar.addMenu(tr("menu_file"))
+        file_menu.setTearOffEnabled(True)
+        
         edit_menu = menubar.addMenu(tr("menu_edit"))
+        edit_menu.setTearOffEnabled(True)
         
         view_menu = menubar.addMenu("Zobrazenie")
+        view_menu.setTearOffEnabled(True)
+        
         self.act_safe_zone = QAction("Bezpečná zóna", self)
         view_menu.addAction(self.act_safe_zone)
         self.act_bg_settings = QAction("Referenčný obrázok", self)
         view_menu.addAction(self.act_bg_settings)
         
         snap_menu = menubar.addMenu(tr("group_snap") if hasattr(tr, '__call__') else "Prichytávanie")
+        snap_menu.setTearOffEnabled(True)
         self.act_snap_x = QAction(tr("snap_x"), self)
         self.act_snap_x.setCheckable(True)
         self.act_snap_y = QAction(tr("snap_y"), self)
